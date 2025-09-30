@@ -13,8 +13,8 @@
 #include "esp_lcd_panel_vendor.h" 
 #include "esp_lcd_panel_ops.h" 
 #include "esp_heap_caps.h" 
-#include "bsp_pcf85063.h" 
-#include "lvgl.h" 
+#include "bsp_pcf85063.h"
+#include "lvgl.h"  
 
 static const char *TAG = "RTC_DISPLAY";
 

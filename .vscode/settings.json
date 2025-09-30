@@ -1,6 +1,7 @@
 {
     "idf.pythonInstallPath": "/usr/bin/python",
     "files.associations": {
-        "freertos.h": "c"
+        "cst816t.h": "c",
+        "esp_lcd_panel_vendor.h": "c"
     }
 }
