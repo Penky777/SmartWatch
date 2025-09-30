@@ -149,7 +149,7 @@ void app_main(void)
     esp_lcd_panel_io_spi_config_t iocfg = {
         .dc_gpio_num=PIN_NUM_DC, 
         .cs_gpio_num=PIN_NUM_CS, 
-        .pclk_hz=40*1000*1000,
+        .pclk_hz=80*1000*1000,
         .lcd_cmd_bits=8, 
         .lcd_param_bits=8, 
         .spi_mode=0, 
