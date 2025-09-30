@@ -1,21 +1,22 @@
+
 #include <stdio.h>
-#include <string.h>
-#include <math.h>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "esp_log.h"
-#include "driver/spi_master.h"
-#include "driver/gpio.h"
-#include "driver/ledc.h"
-#include "driver/i2c_master.h"
-#include "esp_lcd_panel_io.h"
-#include "esp_lcd_panel_vendor.h"
-#include "esp_lcd_panel_ops.h"
-#include "esp_heap_caps.h"
+#include <string.h> 
+#include <math.h> 
+#include "freertos/FreeRTOS.h" 
+#include "freertos/task.h" 
+#include "esp_log.h" 
+#include "driver/gpio.h" 
+#include "driver/spi_master.h" 
+#include "driver/ledc.h" 
+#include "driver/i2c_master.h" 
+#include "esp_lcd_panel_io.h" 
+#include "esp_lcd_panel_vendor.h" 
+#include "esp_lcd_panel_ops.h" 
+#include "esp_heap_caps.h" 
+#include "bsp_pcf85063.h" 
+#include "lvgl.h" 
 
-#include "cst816t.h"  // <— our minimal CST816T driver
-
-static const char *TAG = "PAINT_DEMO_CST816T";
+static const char *TAG = "RTC_DISPLAY";
 
 // ===== Display pins =====
 #define PIN_NUM_MOSI 2
@@ -28,9 +29,9 @@ static const char *TAG = "PAINT_DEMO_CST816T";
 #define LCD_WIDTH   240
 #define LCD_HEIGHT  280
 #define LCD_X_GAP   0
-#define LCD_Y_GAP   20   // top gap used in ST7789 init
+#define LCD_Y_GAP   0
 
-// ===== Backlight (LEDC) =====
+// ===== Backlight =====
 #define LEDC_TIMER      LEDC_TIMER_0
 #define LEDC_MODE       LEDC_LOW_SPEED_MODE
 #define LEDC_OUTPUT_IO  PIN_NUM_BL
@@ -41,39 +42,20 @@ static const char *TAG = "PAINT_DEMO_CST816T";
 // ===== Colors (RGB565) =====
 #define C_BLACK   0x0000
 #define C_WHITE   0xFFFF
-#define C_RED     0xF800
-#define C_GREEN   0x07E0
 #define C_BLUE    0x001F
-#define C_DARK    0x4208
-
-// ===== Paint UI =====
-#define PALETTE_H          26
-#define PALETTE_Y0         0
-#define SWATCH_W           40
-#define SWATCH_H           (PALETTE_H - 6)
-#define SWATCH_SPACING     6
-#define SWATCH_Y           (PALETTE_Y0 + 3)
-#define FIRST_SWATCH_X     6
-
-// CLEAR button
-#define CLEAR_W            60
-#define CLEAR_H            (PALETTE_H - 6)
-#define CLEAR_X            (LCD_WIDTH - CLEAR_W - 6)
-#define CLEAR_Y            (PALETTE_Y0 + 3)
-
-// Brush
-#define BRUSH_RADIUS       4
+#define C_GREEN   0x07E0
+#define C_RED     0xF800
 
 // ===== Backlight helpers =====
 static void backlight_init(void){
     ledc_timer_config_t t = {
-        .speed_mode=LEDC_MODE, .timer_num=LEDC_TIMER,
-        .duty_resolution=LEDC_DUTY_RES, .freq_hz=LEDC_FREQUENCY, .clk_cfg=LEDC_AUTO_CLK
+        .speed_mode=LEDC_MODE,.timer_num=LEDC_TIMER,
+        .duty_resolution=LEDC_DUTY_RES,.freq_hz=LEDC_FREQUENCY,.clk_cfg=LEDC_AUTO_CLK
     };
     ESP_ERROR_CHECK(ledc_timer_config(&t));
     ledc_channel_config_t c = {
-        .gpio_num=LEDC_OUTPUT_IO, .speed_mode=LEDC_MODE, .channel=LEDC_CHANNEL,
-        .timer_sel=LEDC_TIMER, .duty=0, .hpoint=0
+        .gpio_num=LEDC_OUTPUT_IO,.speed_mode=LEDC_MODE,.channel=LEDC_CHANNEL,
+        .timer_sel=LEDC_TIMER,.duty=0,.hpoint=0
     };
     ESP_ERROR_CHECK(ledc_channel_config(&c));
 }
@@ -83,95 +65,72 @@ static void backlight_set(uint8_t p){
     ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE,LEDC_CHANNEL));
 }
 
-// ===== Framebuffer helpers =====
+// ===== Simple framebuffer helpers =====
 static void fb_fill(uint16_t *fb, uint16_t color){
     for (int i=0;i<LCD_WIDTH*LCD_HEIGHT;i++) fb[i]=color;
 }
-static void fb_hline(uint16_t *fb,int x0,int x1,int y,uint16_t c){
-    if(y<0||y>=LCD_HEIGHT) return;
-    if(x0>x1){int t=x0;x0=x1;x1=t;}
-    if(x1<0||x0>=LCD_WIDTH) return;
-    if(x0<0) x0=0;
-    if(x1>=LCD_WIDTH) x1=LCD_WIDTH-1;
-    uint16_t *p=&fb[y*LCD_WIDTH + x0];
-    for(int x=x0;x<=x1;x++) *p++=c;
-}
 static void fb_rect(uint16_t *fb,int x,int y,int w,int h,uint16_t c){
-    int x1=x+w-1, y1=y+h-1;
-    if(x>=LCD_WIDTH||y>=LCD_HEIGHT||x1<0||y1<0) return;
-    if(x<0){w += x; x=0;}
-    if(y<0){h += y; y=0;}
-    if(x+w>LCD_WIDTH) w=LCD_WIDTH-x;
-    if(y+h>LCD_HEIGHT) h=LCD_HEIGHT-y;
     for(int yy=y; yy<y+h; yy++){
+        if(yy<0||yy>=LCD_HEIGHT) continue;
         uint16_t *p=&fb[yy*LCD_WIDTH + x];
-        for(int xx=0; xx<w; xx++) *p++=c;
-    }
-}
-static void fb_rect_outline(uint16_t *fb,int x,int y,int w,int h,uint16_t c){
-    fb_hline(fb,x,x+w-1,y,c);
-    fb_hline(fb,x,x+w-1,y+h-1,c);
-    for(int yy=y; yy<y+h; yy++){
-        if(yy<0||yy>=LCD_HEIGHT) continue;
-        if(x>=0&&x<LCD_WIDTH) fb[yy*LCD_WIDTH + x]=c;
-        if(x+w-1>=0&&x+w-1<LCD_WIDTH) fb[yy*LCD_WIDTH + (x+w-1)]=c;
-    }
-}
-static void fb_circle_fill(uint16_t *fb,int cx,int cy,int r,uint16_t c){
-    int r2=r*r;
-    for(int y=-r;y<=r;y++){
-        int yy=cy+y;
-        if(yy<0||yy>=LCD_HEIGHT) continue;
-        int dx=(int)sqrtf((float)(r2 - y*y));
-        int x0=cx - dx, x1=cx + dx;
-        if(x1<0||x0>=LCD_WIDTH) continue;
-        if(x0<0) x0=0;
-        if(x1>=LCD_WIDTH) x1=LCD_WIDTH-1;
-        uint16_t *p=&fb[yy*LCD_WIDTH + x0];
-        for(int x=x0; x<=x1; x++) *p++=c;
-    }
-}
-
-// ===== Palette helpers =====
-typedef enum { SW_WHITE=0, SW_RED, SW_GREEN, SW_BLUE, SWATCH_COUNT } swatch_id_t;
-static uint16_t swatch_color(swatch_id_t id){
-    switch(id){
-        case SW_WHITE: return C_WHITE;
-        case SW_RED:   return C_RED;
-        case SW_GREEN: return C_GREEN;
-        case SW_BLUE:  return C_BLUE;
-        default:       return C_WHITE;
-    }
-}
-static void draw_palette(uint16_t *fb, swatch_id_t active){
-    fb_rect(fb, 0, PALETTE_Y0, LCD_WIDTH, PALETTE_H, 0x18E3);
-    for(int i=0;i<SWATCH_COUNT;i++){
-        int x = FIRST_SWATCH_X + i*(SWATCH_W+SWATCH_SPACING);
-        fb_rect(fb, x, SWATCH_Y, SWATCH_W, SWATCH_H, swatch_color(i));
-        fb_rect_outline(fb, x, SWATCH_Y, SWATCH_W, SWATCH_H, C_DARK);
-        if (i == active) {
-            fb_rect_outline(fb, x-2, SWATCH_Y-2, SWATCH_W+4, SWATCH_H+4, C_WHITE);
+        for(int xx=0; xx<w; xx++){
+            if(x+xx>=0 && x+xx<LCD_WIDTH) *p++=c;
         }
     }
-    fb_rect(fb, CLEAR_X, CLEAR_Y, CLEAR_W, CLEAR_H, 0x39C7);
-    fb_rect_outline(fb, CLEAR_X, CLEAR_Y, CLEAR_W, CLEAR_H, C_DARK);
 }
-static bool hit_swatch(int x,int y, swatch_id_t *out_id){
-    for(int i=0;i<SWATCH_COUNT;i++){
-        int sx = FIRST_SWATCH_X + i*(SWATCH_W+SWATCH_SPACING);
-        if (x>=sx && x<sx+SWATCH_W && y>=SWATCH_Y && y<SWATCH_Y+SWATCH_H){
-            if(out_id) *out_id = (swatch_id_t)i;
-            return true;
+
+// ===== Very basic text drawing (5x7 font) =====
+static const uint8_t font5x7[] = {
+    // only digits '0'..'9' and ':' stored here
+    // each char is 5 bytes (columns)
+    // '0'
+    0x3E,0x51,0x49,0x45,0x3E,
+    // '1'
+    0x00,0x42,0x7F,0x40,0x00,
+    // '2'
+    0x42,0x61,0x51,0x49,0x46,
+    // '3'
+    0x21,0x41,0x45,0x4B,0x31,
+    // '4'
+    0x18,0x14,0x12,0x7F,0x10,
+    // '5'
+    0x27,0x45,0x45,0x45,0x39,
+    // '6'
+    0x3C,0x4A,0x49,0x49,0x30,
+    // '7'
+    0x01,0x71,0x09,0x05,0x03,
+    // '8'
+    0x36,0x49,0x49,0x49,0x36,
+    // '9'
+    0x06,0x49,0x49,0x29,0x1E,
+    // ':'
+    0x00,0x36,0x36,0x00,0x00
+};
+static void draw_char(uint16_t *fb,int x,int y,char ch,uint16_t color){
+    int idx=-1;
+    if(ch>='0' && ch<='9') idx=(ch-'0');
+    else if(ch==':') idx=10;
+    if(idx<0) return;
+    const uint8_t *glyph=&font5x7[idx*5];
+    for(int col=0; col<5; col++){
+        for(int row=0; row<7; row++){
+            if(glyph[col] & (1<<row)){
+                int xx=x+col, yy=y+row;
+                if(xx>=0&&xx<LCD_WIDTH&&yy>=0&&yy<LCD_HEIGHT){
+                    fb[yy*LCD_WIDTH+xx]=color;
+                }
+            }
         }
     }
-    return false;
 }
-static bool hit_clear(int x,int y){
-    return (x>=CLEAR_X && x<CLEAR_X+CLEAR_W && y>=CLEAR_Y && y<CLEAR_Y+CLEAR_H);
+static void draw_string(uint16_t *fb,int x,int y,const char *s,uint16_t color){
+    while(*s){
+        draw_char(fb,x,y,*s,color);
+        x+=6; // 5px + 1 space
+        s++;
+    }
 }
 
-
-// ---------- Main ----------
 void app_main(void)
 {
     // --- SPI bus for ST7789 ---
@@ -181,7 +140,6 @@ void app_main(void)
     };
     ESP_ERROR_CHECK(spi_bus_initialize(SPI2_HOST,&buscfg,SPI_DMA_CH_AUTO));
 
-    // Panel IO + ST7789
     esp_lcd_panel_io_handle_t io=NULL;
     esp_lcd_panel_io_spi_config_t iocfg = {
         .dc_gpio_num=PIN_NUM_DC, .cs_gpio_num=PIN_NUM_CS, .pclk_hz=40*1000*1000,
@@ -196,80 +154,47 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_lcd_new_panel_st7789(io,&pcfg,&panel));
     ESP_ERROR_CHECK(esp_lcd_panel_reset(panel));
     ESP_ERROR_CHECK(esp_lcd_panel_init(panel));
-    ESP_ERROR_CHECK(esp_lcd_panel_set_gap(panel, LCD_X_GAP, LCD_Y_GAP));
-    ESP_ERROR_CHECK(esp_lcd_panel_invert_color(panel, true));
-    ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel, true));
+    ESP_ERROR_CHECK(esp_lcd_panel_set_gap(panel,LCD_X_GAP,LCD_Y_GAP));
+    ESP_ERROR_CHECK(esp_lcd_panel_invert_color(panel,true));
+    ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel,true));
 
     // Backlight
     backlight_init();
     backlight_set(100);
 
-    // --- I2C bus for CST816T ---
-    i2c_master_bus_handle_t i2c_bus = NULL;
-    i2c_master_bus_config_t i2c_cfg = {
+    // --- I2C bus for RTC ---
+    i2c_master_bus_handle_t bus=NULL;
+    i2c_master_bus_config_t bus_cfg = {
         .i2c_port = I2C_NUM_0,
-        .sda_io_num = GPIO_NUM_8,   // SDA from your table
-        .scl_io_num = GPIO_NUM_7,   // SCL from your table
+        .sda_io_num = GPIO_NUM_8,
+        .scl_io_num = GPIO_NUM_7,
         .clk_source = I2C_CLK_SRC_DEFAULT,
         .glitch_ignore_cnt = 7,
-        .flags = { .enable_internal_pullup = true },
+        .flags = {.enable_internal_pullup=true},
     };
-    ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_cfg, &i2c_bus));
+    ESP_ERROR_CHECK(i2c_new_master_bus(&bus_cfg,&bus));
 
-    cst816t_t tp = {0};
-    ESP_ERROR_CHECK(cst816t_init(&tp, i2c_bus, GPIO_NUM_11)); // INT on GPIO11 (or GPIO_NUM_NC)
+    // --- RTC init ---
+    bsp_pcf85063_init(bus);
 
     // Framebuffer
     size_t sz = LCD_WIDTH*LCD_HEIGHT*2;
     uint16_t *fb = heap_caps_malloc(sz, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
-    if(!fb){
-        ESP_LOGE(TAG,"FB alloc failed");
-        return;
-    }
+    if(!fb){ ESP_LOGE(TAG,"FB alloc failed"); return; }
 
-    // Initial canvas
-    fb_fill(fb, C_BLACK);
-    fb_rect(fb, 0, PALETTE_Y0+PALETTE_H, LCD_WIDTH, LCD_HEIGHT-(PALETTE_Y0+PALETTE_H), 0x0008);
-    swatch_id_t active = SW_WHITE;
-    draw_palette(fb, active);
-    ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel, 0, 0, LCD_WIDTH, LCD_HEIGHT, fb));
-
-    // Paint loop
+    // Loop: read RTC and show
     while(1){
-        bool touched = false;
-        uint16_t rx = 0, ry = 0;
-        esp_err_t tr = cst816t_read_point(&tp, &touched, &rx, &ry);
-        if (tr != ESP_OK) {
-            ESP_LOGE(TAG, "CST816T read error: %s", esp_err_to_name(tr));
-            vTaskDelay(pdMS_TO_TICKS(16));
-            continue;
+        struct tm now;
+        if(bsp_pcf85063_get_time(&now)){
+            char buf[32];
+            snprintf(buf,sizeof(buf),"%02d:%02d:%02d",
+                     now.tm_hour,now.tm_min,now.tm_sec);
+
+            fb_fill(fb,C_BLACK);
+            draw_string(fb,60,120,buf,C_GREEN);
+
+            ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel,0,0,LCD_WIDTH,LCD_HEIGHT,fb));
         }
-
-        if (touched){
-            int tx = (int)rx;
-            int ty = (int)ry - LCD_Y_GAP;
-
-            if (tx < 0) tx = 0;
-            if (tx >= LCD_WIDTH) tx = LCD_WIDTH - 1;
-            if (ty < 0) ty = 0;
-            if (ty >= LCD_HEIGHT) ty = LCD_HEIGHT - 1;
-
-            if (ty >= PALETTE_Y0 && ty < PALETTE_Y0 + PALETTE_H){
-                swatch_id_t id;
-                if (hit_swatch(tx, ty, &id)){
-                    active = id;
-                    draw_palette(fb, active);
-                } else if (hit_clear(tx, ty)){
-                    fb_rect(fb, 0, PALETTE_Y0+PALETTE_H,
-                            LCD_WIDTH, LCD_HEIGHT-(PALETTE_Y0+PALETTE_H), 0x0008);
-                }
-            } else {
-                fb_circle_fill(fb, tx, ty, BRUSH_RADIUS, swatch_color(active));
-            }
-
-            ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel, 0, 0, LCD_WIDTH, LCD_HEIGHT, fb));
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
