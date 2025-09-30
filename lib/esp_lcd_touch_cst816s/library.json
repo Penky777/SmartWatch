@@ -1,0 +1,10 @@
+{
+  "name": "esp_lcd_touch_cst816s",
+  "version": "1.0.0",
+  "build": {
+    "srcFilter": [
+      "+<*>",
+      "-<test_apps/>"
+    ]
+  }
+}
