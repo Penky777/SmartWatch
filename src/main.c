@@ -1,3 +1,4 @@
+
 #include <stdio.h>
 #include <string.h> 
 #include <math.h> 
@@ -17,6 +18,8 @@
 #include "bsp_qmi8658.h"
 #include "bsp_i2c.h"
 
+#include "bsp_pcf85063.h"
+#include "lvgl.h"  
 
 static const char *TAG = "RTC_DISPLAY";
 
