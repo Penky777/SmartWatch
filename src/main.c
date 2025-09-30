@@ -20,6 +20,7 @@
 
 #include "bsp_pcf85063.h"
 #include "lvgl.h"  
+#include "bsp_qmi8658.h"
 
 static const char *TAG = "RTC_DISPLAY";
 
