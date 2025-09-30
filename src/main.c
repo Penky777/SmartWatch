@@ -33,7 +33,7 @@ static const char *TAG = "RTC_DISPLAY";
 
 #define LCD_WIDTH   240
 #define LCD_HEIGHT  280
-#define LCD_X_GAP   50
+#define LCD_X_GAP   0
 #define LCD_Y_GAP   0
 
 // ===== Backlight =====
