@@ -13,6 +13,10 @@
 #include "esp_lcd_panel_ops.h" 
 #include "esp_heap_caps.h" 
 #include "bsp_pcf85063.h" 
+#include "cst816t.h"
+#include "bsp_qmi8658.h"
+#include "bsp_i2c.h"
+
 
 static const char *TAG = "RTC_DISPLAY";
 
@@ -140,8 +144,13 @@ void app_main(void)
 
     esp_lcd_panel_io_handle_t io=NULL;
     esp_lcd_panel_io_spi_config_t iocfg = {
-        .dc_gpio_num=PIN_NUM_DC, .cs_gpio_num=PIN_NUM_CS, .pclk_hz=40*1000*1000,
-        .lcd_cmd_bits=8, .lcd_param_bits=8, .spi_mode=0, .trans_queue_depth=10
+        .dc_gpio_num=PIN_NUM_DC, 
+        .cs_gpio_num=PIN_NUM_CS, 
+        .pclk_hz=40*1000*1000,
+        .lcd_cmd_bits=8, 
+        .lcd_param_bits=8, 
+        .spi_mode=0, 
+        .trans_queue_depth=10
     };
     ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)SPI2_HOST,&iocfg,&io));
 
