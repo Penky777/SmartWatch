@@ -39,6 +39,7 @@
 #define LCD_WIDTH       240
 #define LCD_HEIGHT      280
 #define LV_TICK_PERIOD_MS 2
+#define BUFFER_ROWS     40   // partial buffer height
 
 // ---------- I2C / CST816 ----------
 #define I2C_PORT        I2C_NUM_0
@@ -98,15 +99,9 @@ static void lvgl_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px
     ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(g_panel, x1, y1, x2e, y2e, px_map));
     lv_display_flush_ready(disp);
 }
-static void lvgl_tick_cb(void *arg){ 
-    (void)arg; lv_tick_inc(LV_TICK_PERIOD_MS); 
-}
-static void gui_lock(void){ 
-    if(gui_mutex) xSemaphoreTake(gui_mutex, portMAX_DELAY); 
-}
-static void gui_unlock(void){ 
-    if(gui_mutex) xSemaphoreGive(gui_mutex);
-}
+static void lvgl_tick_cb(void *arg){ (void)arg; lv_tick_inc(LV_TICK_PERIOD_MS); }
+static void gui_lock(void){ if(gui_mutex) xSemaphoreTake(gui_mutex, portMAX_DELAY); }
+static void gui_unlock(void){ if(gui_mutex) xSemaphoreGive(gui_mutex); }
 
 // ---------- I2C helpers ----------
 static esp_err_t i2c_bus_init(void){
@@ -177,13 +172,12 @@ static void brightness_slider_event_cb(lv_event_t *e){
         backlight_set((uint8_t)val);
     }
 }
-
 static lv_obj_t* add_menu_row(lv_obj_t *parent, const char *title, const char *subtitle){
     lv_obj_t *row = lv_btn_create(parent);
     lv_obj_set_width(row, lv_pct(100));
     lv_obj_set_height(row, LV_SIZE_CONTENT);
     lv_obj_set_style_pad_all(row, 10, 0);
-    lv_obj_set_style_radius(row, 6, 0);
+    lv_obj_set_style_radius(row, 20, 0);
     lv_obj_set_style_bg_opa(row, LV_OPA_20, 0);
     lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
     lv_obj_set_style_pad_column(row, 8, 0);
@@ -193,7 +187,6 @@ static lv_obj_t* add_menu_row(lv_obj_t *parent, const char *title, const char *s
     lv_obj_set_flex_grow(lbl, 1);
     return row;
 }
-
 static void build_ui(void){
     lv_obj_t *scr = lv_scr_act();
 
@@ -234,18 +227,12 @@ static void build_ui(void){
         lv_obj_add_event_cb(sl, brightness_slider_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
     }
 
-    // Time row (uses new module)
+    // Time row
     lv_obj_t *time_row = add_menu_row(menu_page, "Time", "Set clock");
     lv_obj_add_event_cb(time_row, time_btn_event_cb, LV_EVENT_CLICKED, NULL);
 
     (void)add_menu_row(menu_page, "Auto Brightness", NULL);
     (void)add_menu_row(menu_page, "About", "Device info");
-
-    for(int i=0;i<12;i++){ 
-        char t[24]; 
-        snprintf(t,sizeof(t),"Item %02d", i+1); 
-        (void)add_menu_row(menu_page, t, NULL); 
-    }
 }
 
 // ---------- Tasks ----------
@@ -258,13 +245,12 @@ static void clock_task(void *arg){
             snprintf(buf, sizeof(buf), "%02d:%02d:%02d", now.tm_hour, now.tm_min, now.tm_sec);
             gui_lock();
             if(header_time_lbl) lv_label_set_text(header_time_lbl, buf);
-            time_screen_update(buf); // update the time screen
+            time_screen_update(buf); // update time screen if active
             gui_unlock();
         }
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
-
 static void touch_task(void *arg){
     (void)arg;
     gpio_config_t io = {
@@ -302,7 +288,7 @@ void app_main(void){
         .miso_io_num = -1,
         .quadwp_io_num = -1,
         .quadhd_io_num = -1,
-        .max_transfer_sz = LCD_WIDTH * 40 * 2
+        .max_transfer_sz = LCD_WIDTH * BUFFER_ROWS * 2
     };
     ESP_ERROR_CHECK(spi_bus_initialize(SPI2_HOST, &buscfg, SPI_DMA_CH_AUTO));
 
@@ -311,7 +297,7 @@ void app_main(void){
     esp_lcd_panel_io_spi_config_t iocfg = {
         .dc_gpio_num = LCD_DC_GPIO,
         .cs_gpio_num = LCD_CS_GPIO,
-        .pclk_hz = 80 * 1000 * 1000,
+        .pclk_hz = 60 * 1000 * 1000,
         .lcd_cmd_bits = 8,
         .lcd_param_bits = 8,
         .spi_mode = 0,
@@ -328,7 +314,6 @@ void app_main(void){
     ESP_ERROR_CHECK(esp_lcd_panel_init(g_panel));
     ESP_ERROR_CHECK(esp_lcd_panel_invert_color(g_panel, true));
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(g_panel, true));
-
     esp_lcd_panel_set_gap(g_panel, 0, 20);
 
     // Backlight
@@ -357,8 +342,9 @@ void app_main(void){
     ESP_ERROR_CHECK(esp_timer_create(&tick_args, &tick_timer));
     ESP_ERROR_CHECK(esp_timer_start_periodic(tick_timer, LV_TICK_PERIOD_MS * 1000));
 
-    static lv_color_t buf1[LCD_WIDTH * 40];
-    static lv_color_t buf2[LCD_WIDTH * 40];
+    // Partial double buffer (two row-chunks)
+    static lv_color_t buf1[LCD_WIDTH * BUFFER_ROWS];
+    static lv_color_t buf2[LCD_WIDTH * BUFFER_ROWS];
     lv_display_t *disp = lv_display_create(LCD_WIDTH, LCD_HEIGHT);
     lv_display_set_flush_cb(disp, lvgl_flush_cb);
     lv_display_set_buffers(disp, buf1, buf2, sizeof(buf1), LV_DISPLAY_RENDER_MODE_PARTIAL);
