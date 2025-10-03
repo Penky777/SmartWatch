@@ -10,7 +10,7 @@
 
 #include "esp_log.h"
 #include "esp_err.h"
-#include "esp_timer.h"           // LVGL tick [web:23]
+#include "esp_timer.h"
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
 #include "driver/ledc.h"
@@ -22,8 +22,9 @@
 
 #include "lvgl.h"
 #include "bsp_pcf85063.h"
+#include "time_screen.h"
 
-// ---------- Pins (per map) ----------
+// ---------- Pins ----------
 #define LCD_SCLK_GPIO   1
 #define LCD_MOSI_GPIO   2
 #define LCD_DC_GPIO     3
@@ -43,7 +44,6 @@
 #define I2C_PORT        I2C_NUM_0
 #define CST816_I2C_ADDR 0x15
 #define REG_GESTURE     0x01
-#define REG_FINGERNUM   0x02
 #define REG_XH          0x03
 #define REG_XL          0x04
 #define REG_YH          0x05
@@ -62,13 +62,8 @@ static QueueHandle_t touch_evt_queue = NULL;
 
 static volatile bool s_touch_irq_flag = false;
 
-static lv_obj_t *header_time_lbl = NULL; // SINGLE definition
-
+static lv_obj_t *header_time_lbl = NULL;
 static lv_indev_t *indev_touch = NULL;
-
-// >>> NEW CODE <<<
-// Time screen label handle
-static lv_obj_t *time_screen_lbl = NULL;
 
 // ---------- Backlight ----------
 static void backlight_init(void){
@@ -160,8 +155,8 @@ static esp_err_t cst816_read_sample(touch_sample_t *out){
     out->pressed = fingers > 0;
     uint16_t x = ((buf[2] & 0x0F) << 8) | buf[3];
     uint16_t y = ((buf[4] & 0x0F) << 8) | buf[5];
-    if(x >= LCD_WIDTH) x = LCD_WIDTH ;//remove offset
-    if(y >= LCD_HEIGHT) y = LCD_HEIGHT ;//remove offset
+    if(x >= LCD_WIDTH) x = LCD_WIDTH - 1;
+    if(y >= LCD_HEIGHT) y = LCD_HEIGHT - 1;
     out->x = (int16_t)x;
     out->y = (int16_t)y;
     return ESP_OK;
@@ -175,7 +170,6 @@ static void lvgl_touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data){
 }
 
 // ---------- UI ----------
-// Brightness slider event
 static void brightness_slider_event_cb(lv_event_t *e){
     if(lv_event_get_code(e) == LV_EVENT_VALUE_CHANGED){
         lv_obj_t *slider = lv_event_get_target(e);
@@ -184,26 +178,10 @@ static void brightness_slider_event_cb(lv_event_t *e){
     }
 }
 
-// >>> NEW CODE <<<
-// Time row button event
-static void time_btn_event_cb(lv_event_t *e) {
-    if(lv_event_get_code(e) == LV_EVENT_CLICKED) {
-        lv_obj_t *time_scr = lv_obj_create(NULL); 
-        lv_obj_set_style_bg_color(time_scr, lv_color_black(), 0);
-
-        time_screen_lbl = lv_label_create(time_scr);
-        lv_label_set_text(time_screen_lbl, "--:--:--"); 
-        lv_obj_set_style_text_color(time_screen_lbl, lv_color_white(), 0);
-        lv_obj_align(time_screen_lbl, LV_ALIGN_CENTER, 0, 0);
-
-        lv_scr_load(time_scr);
-    }
-}
-
 static lv_obj_t* add_menu_row(lv_obj_t *parent, const char *title, const char *subtitle){
     lv_obj_t *row = lv_btn_create(parent);
     lv_obj_set_width(row, lv_pct(100));
-    lv_obj_set_height(row, lv_pct(50));
+    lv_obj_set_height(row, LV_SIZE_CONTENT);
     lv_obj_set_style_pad_all(row, 10, 0);
     lv_obj_set_style_radius(row, 6, 0);
     lv_obj_set_style_bg_opa(row, LV_OPA_20, 0);
@@ -246,23 +224,28 @@ static void build_ui(void){
     lv_obj_set_scrollbar_mode(menu_page, LV_SCROLLBAR_MODE_AUTO);
     lv_obj_align(menu_page, LV_ALIGN_BOTTOM_MID, 0, 0);
 
-    // Rows
+    // Brightness row
     {
         lv_obj_t *r = add_menu_row(menu_page, "Brightness", NULL);
         lv_obj_t *sl = lv_slider_create(r);
         lv_slider_set_range(sl, 5, 100);
-        lv_slider_set_value(sl, 100, LV_ANIM_ON);
+        lv_slider_set_value(sl, 100, LV_ANIM_OFF);
         lv_obj_set_width(sl, 100);
         lv_obj_add_event_cb(sl, brightness_slider_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
     }
 
-    // >>> NEW CODE <<< add event to Time row
+    // Time row (uses new module)
     lv_obj_t *time_row = add_menu_row(menu_page, "Time", "Set clock");
     lv_obj_add_event_cb(time_row, time_btn_event_cb, LV_EVENT_CLICKED, NULL);
 
     (void)add_menu_row(menu_page, "Auto Brightness", NULL);
     (void)add_menu_row(menu_page, "About", "Device info");
-    
+
+    for(int i=0;i<12;i++){ 
+        char t[24]; 
+        snprintf(t,sizeof(t),"Item %02d", i+1); 
+        (void)add_menu_row(menu_page, t, NULL); 
+    }
 }
 
 // ---------- Tasks ----------
@@ -275,18 +258,15 @@ static void clock_task(void *arg){
             snprintf(buf, sizeof(buf), "%02d:%02d:%02d", now.tm_hour, now.tm_min, now.tm_sec);
             gui_lock();
             if(header_time_lbl) lv_label_set_text(header_time_lbl, buf);
-
-            // >>> NEW CODE <<< also update time screen if active
-            if(time_screen_lbl) lv_label_set_text(time_screen_lbl, buf);
-
+            time_screen_update(buf); // update the time screen
             gui_unlock();
         }
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
+
 static void touch_task(void *arg){
     (void)arg;
-    // INT pin
     gpio_config_t io = {
         .pin_bit_mask = 1ULL << TP_INT_GPIO,
         .mode = GPIO_MODE_INPUT,
@@ -298,7 +278,6 @@ static void touch_task(void *arg){
     ESP_ERROR_CHECK(gpio_install_isr_service(0));
     ESP_ERROR_CHECK(gpio_isr_handler_add(TP_INT_GPIO, touch_isr, NULL));
 
-    // Clear pending
     touch_sample_t samp = {0};
     (void)cst816_read_sample(&samp);
 
@@ -325,7 +304,7 @@ void app_main(void){
         .quadhd_io_num = -1,
         .max_transfer_sz = LCD_WIDTH * 40 * 2
     };
-    ESP_ERROR_CHECK(spi_bus_initialize(SPI2_HOST, &buscfg, SPI_DMA_CH_AUTO)); // [web:23]
+    ESP_ERROR_CHECK(spi_bus_initialize(SPI2_HOST, &buscfg, SPI_DMA_CH_AUTO));
 
     // Panel IO + panel
     esp_lcd_panel_io_handle_t io = NULL;
@@ -338,7 +317,7 @@ void app_main(void){
         .spi_mode = 0,
         .trans_queue_depth = 10
     };
-    ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)SPI2_HOST, &iocfg, &io)); // [web:23]
+    ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)SPI2_HOST, &iocfg, &io));
     esp_lcd_panel_dev_config_t pcfg = {
         .reset_gpio_num = LCD_RST_GPIO,
         .color_space = ESP_LCD_COLOR_SPACE_RGB,
@@ -349,14 +328,13 @@ void app_main(void){
     ESP_ERROR_CHECK(esp_lcd_panel_init(g_panel));
     ESP_ERROR_CHECK(esp_lcd_panel_invert_color(g_panel, true));
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(g_panel, true));
-    ESP_ERROR_CHECK(esp_lcd_panel_set_gap(g_panel, 0, 20));
 
     // Backlight
     backlight_init();
     backlight_set(100);
 
     // I2C and peripherals
-    ESP_ERROR_CHECK(i2c_bus_init());                                  // [web:89]
+    ESP_ERROR_CHECK(i2c_bus_init());
     bsp_pcf85063_init(g_i2c_bus);
 
     ESP_ERROR_CHECK(cst816_add_device());
@@ -364,7 +342,7 @@ void app_main(void){
     if(cst816_probe_id(&id) == ESP_OK) ESP_LOGI(TAG, "CST816 ID=0x%02X", id);
 
     // LVGL
-    lv_init();                                                         // [web:23]
+    lv_init();
     gui_mutex = xSemaphoreCreateMutex();
 
     const esp_timer_create_args_t tick_args = {
@@ -374,19 +352,22 @@ void app_main(void){
         .name = "lv_tick"
     };
     esp_timer_handle_t tick_timer;
-    ESP_ERROR_CHECK(esp_timer_create(&tick_args, &tick_timer));        // [web:23]
-    ESP_ERROR_CHECK(esp_timer_start_periodic(tick_timer, LV_TICK_PERIOD_MS * 1000)); // [web:23]
+    ESP_ERROR_CHECK(esp_timer_create(&tick_args, &tick_timer));
+    ESP_ERROR_CHECK(esp_timer_start_periodic(tick_timer, LV_TICK_PERIOD_MS * 1000));
 
     static lv_color_t buf1[LCD_WIDTH * 40];
     static lv_color_t buf2[LCD_WIDTH * 40];
     lv_display_t *disp = lv_display_create(LCD_WIDTH, LCD_HEIGHT);
-    lv_display_set_flush_cb(disp, lvgl_flush_cb);                      // [web:23]
-    lv_display_set_buffers(disp, buf1, buf2, sizeof(buf1), LV_DISPLAY_RENDER_MODE_PARTIAL); // [web:23]
+    lv_display_set_flush_cb(disp, lvgl_flush_cb);
+    lv_display_set_buffers(disp, buf1, buf2, sizeof(buf1), LV_DISPLAY_RENDER_MODE_PARTIAL);
 
     // Touch indev
     indev_touch = lv_indev_create();
-    lv_indev_set_type(indev_touch, LV_INDEV_TYPE_POINTER);             // [web:7][web:19]
-    lv_indev_set_read_cb(indev_touch, lvgl_touch_read_cb);             // [web:7][web:19]
+    lv_indev_set_type(indev_touch, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(indev_touch, lvgl_touch_read_cb);
+
+    // Initialize time screen module
+    time_screen_init();
 
     // UI
     gui_lock(); build_ui(); gui_unlock();

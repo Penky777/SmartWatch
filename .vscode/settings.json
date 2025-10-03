@@ -2,6 +2,7 @@
     "idf.pythonInstallPath": "/usr/bin/python",
     "files.associations": {
         "cst816t.h": "c",
-        "esp_lcd_panel_vendor.h": "c"
+        "esp_lcd_panel_vendor.h": "c",
+        "cstdlib": "c"
     }
 }
