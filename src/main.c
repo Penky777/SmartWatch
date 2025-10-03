@@ -66,6 +66,13 @@ static volatile bool s_touch_irq_flag = false;
 static lv_obj_t *header_time_lbl = NULL;
 static lv_indev_t *indev_touch = NULL;
 
+static uint32_t g_last_activity_ms = 0;
+static bool g_backlight_on = true;
+static uint8_t g_backlight_level = 100; // remember last level
+
+
+
+
 // ---------- Backlight ----------
 static void backlight_init(void){
     ledc_timer_config_t t = {
@@ -156,13 +163,21 @@ static esp_err_t cst816_read_sample(touch_sample_t *out){
     out->y = (int16_t)y;
     return ESP_OK;
 }
+
+
 static void lvgl_touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data){
     (void)indev;
     data->state = s_last_touch.pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
     data->point.x = s_last_touch.x;
     data->point.y = s_last_touch.y;
     data->continue_reading = false;
+
+    if(data->state == LV_INDEV_STATE_PRESSED){
+        g_last_activity_ms = lv_tick_get();                                    // mark activity [web:233][web:242]
+        if(!g_backlight_on){ backlight_set(g_backlight_level); g_backlight_on = true; } // wake on touch
+    }
 }
+
 
 // ---------- UI ----------
 static void brightness_slider_event_cb(lv_event_t *e){
@@ -189,6 +204,9 @@ static lv_obj_t* add_menu_row(lv_obj_t *parent, const char *title, const char *s
 }
 static void build_ui(void){
     lv_obj_t *scr = lv_scr_act();
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x252424), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN); 
+    
 
     // Header
     lv_obj_t *header = lv_obj_create(scr);
@@ -197,6 +215,8 @@ static void build_ui(void){
     lv_obj_set_style_pad_all(header, 8, 0);
     lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
+    // lv_obj_set_style_bg_color(header, lv_color_hex(0x202833), LV_PART_MAIN);
+    // lv_obj_set_style_bg_opa(header, LV_OPA_COVER, LV_PART_MAIN);
 
     header_time_lbl = lv_label_create(header);
     lv_label_set_text(header_time_lbl, "--:--:--");
@@ -216,6 +236,8 @@ static void build_ui(void){
     lv_obj_add_flag(menu_page, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(menu_page, LV_SCROLLBAR_MODE_AUTO);
     lv_obj_align(menu_page, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_style_bg_color(menu_page, lv_color_hex(0x252424), LV_PART_MAIN);//color_hex(0x1E2430)
+    lv_obj_set_style_bg_opa(menu_page, LV_OPA_COVER, LV_PART_MAIN);
 
     // Brightness row
     {
@@ -279,6 +301,9 @@ static void touch_task(void *arg){
     }
 }
 
+
+
+
 // ---------- Main ----------
 void app_main(void){
     // SPI bus
@@ -330,6 +355,8 @@ void app_main(void){
 
     // LVGL
     lv_init();
+    g_last_activity_ms = lv_tick_get();  // start “active now” [web:233]
+
     gui_mutex = xSemaphoreCreateMutex();
 
     const esp_timer_create_args_t tick_args = {
@@ -367,7 +394,17 @@ void app_main(void){
 
     // LVGL loop
     while(1){
-        gui_lock(); lv_timer_handler(); gui_unlock();
-        vTaskDelay(pdMS_TO_TICKS(5));
+    gui_lock(); lv_timer_handler(); gui_unlock();
+
+    // Inactivity check: 10 s without input -> backlight off
+    uint32_t now = lv_tick_get();
+    if(g_backlight_on){
+        if(now - g_last_activity_ms > 10000){          // 10 s timeout
+            backlight_set(0);                           // turn off BL (panel stays on) [web:241]
+            g_backlight_on = false;
+        }
     }
+    vTaskDelay(pdMS_TO_TICKS(5));
+    }
+
 }
