@@ -181,7 +181,7 @@ static void brightness_slider_event_cb(lv_event_t *e){
 static lv_obj_t* add_menu_row(lv_obj_t *parent, const char *title, const char *subtitle){
     lv_obj_t *row = lv_btn_create(parent);
     lv_obj_set_width(row, lv_pct(100));
-    lv_obj_set_height(row, LV_SIZE_CONTENT);
+    lv_obj_set_height(row, lv_pct(50));
     lv_obj_set_style_pad_all(row, 10, 0);
     lv_obj_set_style_radius(row, 6, 0);
     lv_obj_set_style_bg_opa(row, LV_OPA_20, 0);
@@ -228,18 +228,14 @@ static void build_ui(void){
         lv_obj_t *r = add_menu_row(menu_page, "Brightness", NULL);
         lv_obj_t *sl = lv_slider_create(r);
         lv_slider_set_range(sl, 5, 100);
-        lv_slider_set_value(sl, 100, LV_ANIM_OFF);
+        lv_slider_set_value(sl, 100, LV_ANIM_ON);
         lv_obj_set_width(sl, 100);
         lv_obj_add_event_cb(sl, brightness_slider_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
     }
     (void)add_menu_row(menu_page, "Time", "Set clock");
     (void)add_menu_row(menu_page, "Auto Brightness", NULL);
     (void)add_menu_row(menu_page, "About", "Device info");
-    for(int i=0;i<12;i++){ 
-        char t[24]; 
-        snprintf(t,sizeof(t),"Item %02d", i+1); 
-        (void)add_menu_row(menu_page, t, NULL); 
-    }
+    
 }
 
 // ---------- Tasks ----------
@@ -322,6 +318,7 @@ void app_main(void){
     ESP_ERROR_CHECK(esp_lcd_panel_init(g_panel));
     ESP_ERROR_CHECK(esp_lcd_panel_invert_color(g_panel, true));
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(g_panel, true));
+    ESP_ERROR_CHECK(esp_lcd_panel_set_gap(g_panel, 0, 20));
 
     // Backlight
     backlight_init();
