@@ -190,7 +190,7 @@ static void brightness_slider_event_cb(lv_event_t *e){
 static lv_obj_t* add_menu_row(lv_obj_t *parent, const char *title, const char *subtitle){
     lv_obj_t *row = lv_btn_create(parent);
     lv_obj_set_width(row, lv_pct(100));
-    lv_obj_set_height(row, LV_SIZE_CONTENT);
+    lv_obj_set_height(row, 60);
     lv_obj_set_style_pad_all(row, 10, 0);
     lv_obj_set_style_radius(row, 20, 0);
     lv_obj_set_style_bg_opa(row, LV_OPA_20, 0);
