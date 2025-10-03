@@ -66,6 +66,10 @@ static lv_obj_t *header_time_lbl = NULL; // SINGLE definition
 
 static lv_indev_t *indev_touch = NULL;
 
+// >>> NEW CODE <<<
+// Time screen label handle
+static lv_obj_t *time_screen_lbl = NULL;
+
 // ---------- Backlight ----------
 static void backlight_init(void){
     ledc_timer_config_t t = {
@@ -171,6 +175,7 @@ static void lvgl_touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data){
 }
 
 // ---------- UI ----------
+// Brightness slider event
 static void brightness_slider_event_cb(lv_event_t *e){
     if(lv_event_get_code(e) == LV_EVENT_VALUE_CHANGED){
         lv_obj_t *slider = lv_event_get_target(e);
@@ -178,6 +183,23 @@ static void brightness_slider_event_cb(lv_event_t *e){
         backlight_set((uint8_t)val);
     }
 }
+
+// >>> NEW CODE <<<
+// Time row button event
+static void time_btn_event_cb(lv_event_t *e) {
+    if(lv_event_get_code(e) == LV_EVENT_CLICKED) {
+        lv_obj_t *time_scr = lv_obj_create(NULL); 
+        lv_obj_set_style_bg_color(time_scr, lv_color_black(), 0);
+
+        time_screen_lbl = lv_label_create(time_scr);
+        lv_label_set_text(time_screen_lbl, "--:--:--"); 
+        lv_obj_set_style_text_color(time_screen_lbl, lv_color_white(), 0);
+        lv_obj_align(time_screen_lbl, LV_ALIGN_CENTER, 0, 0);
+
+        lv_scr_load(time_scr);
+    }
+}
+
 static lv_obj_t* add_menu_row(lv_obj_t *parent, const char *title, const char *subtitle){
     lv_obj_t *row = lv_btn_create(parent);
     lv_obj_set_width(row, lv_pct(100));
@@ -193,6 +215,7 @@ static lv_obj_t* add_menu_row(lv_obj_t *parent, const char *title, const char *s
     lv_obj_set_flex_grow(lbl, 1);
     return row;
 }
+
 static void build_ui(void){
     lv_obj_t *scr = lv_scr_act();
 
@@ -232,7 +255,11 @@ static void build_ui(void){
         lv_obj_set_width(sl, 100);
         lv_obj_add_event_cb(sl, brightness_slider_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
     }
-    (void)add_menu_row(menu_page, "Time", "Set clock");
+
+    // >>> NEW CODE <<< add event to Time row
+    lv_obj_t *time_row = add_menu_row(menu_page, "Time", "Set clock");
+    lv_obj_add_event_cb(time_row, time_btn_event_cb, LV_EVENT_CLICKED, NULL);
+
     (void)add_menu_row(menu_page, "Auto Brightness", NULL);
     (void)add_menu_row(menu_page, "About", "Device info");
     for(int i=0;i<12;i++){ 
@@ -252,6 +279,10 @@ static void clock_task(void *arg){
             snprintf(buf, sizeof(buf), "%02d:%02d:%02d", now.tm_hour, now.tm_min, now.tm_sec);
             gui_lock();
             if(header_time_lbl) lv_label_set_text(header_time_lbl, buf);
+
+            // >>> NEW CODE <<< also update time screen if active
+            if(time_screen_lbl) lv_label_set_text(time_screen_lbl, buf);
+
             gui_unlock();
         }
         vTaskDelay(pdMS_TO_TICKS(1000));
