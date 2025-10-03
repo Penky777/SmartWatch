@@ -329,6 +329,8 @@ void app_main(void){
     ESP_ERROR_CHECK(esp_lcd_panel_invert_color(g_panel, true));
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(g_panel, true));
 
+    esp_lcd_panel_set_gap(g_panel, 0, 20);
+
     // Backlight
     backlight_init();
     backlight_set(100);
