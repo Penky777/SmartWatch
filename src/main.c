@@ -156,8 +156,8 @@ static esp_err_t cst816_read_sample(touch_sample_t *out){
     out->pressed = fingers > 0;
     uint16_t x = ((buf[2] & 0x0F) << 8) | buf[3];
     uint16_t y = ((buf[4] & 0x0F) << 8) | buf[5];
-    if(x >= LCD_WIDTH) x = LCD_WIDTH - 1;
-    if(y >= LCD_HEIGHT) y = LCD_HEIGHT - 1;
+    if(x >= LCD_WIDTH) x = LCD_WIDTH ;//remove offset
+    if(y >= LCD_HEIGHT) y = LCD_HEIGHT ;//remove offset
     out->x = (int16_t)x;
     out->y = (int16_t)y;
     return ESP_OK;
