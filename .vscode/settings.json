@@ -4,6 +4,7 @@
         "cst816t.h": "c",
         "esp_lcd_panel_vendor.h": "c",
         "cstdlib": "c",
-        "lvgl.h": "c"
+        "lvgl.h": "c",
+        "esp_log.h": "c"
     }
 }
