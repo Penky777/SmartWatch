@@ -1,4 +1,3 @@
-
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -22,10 +21,8 @@
 #include "bsp_pcf85063.h"
 #include "time_screen.h"
 
-#include "icons/Calendar.h"
-#include "icons/Activity.h"
-#include "icons/Settings.h"
-#include "icons/Calculator.h"
+#include "menu_screen.h"
+#include "settings_screen.h"
 
 // ----------- PIN & BUS CONFIG -----------
 #define LCD_SCLK_GPIO   1
@@ -60,7 +57,6 @@ static i2c_master_dev_handle_t g_touch_dev = NULL;
 static QueueHandle_t touch_evt_queue = NULL;
 static SemaphoreHandle_t gui_mutex = NULL;
 
-static lv_obj_t *header_time_lbl = NULL;
 static lv_indev_t *indev_touch = NULL;
 static uint32_t g_last_activity_ms = 0;
 static bool g_backlight_on = true;
@@ -187,183 +183,6 @@ static void lvgl_touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
     }
 }
 
-// ---------- UI ----------
-static void brightness_slider_event_cb(lv_event_t *e){
-    if(lv_event_get_code(e) == LV_EVENT_VALUE_CHANGED){
-        lv_obj_t *slider = lv_event_get_target(e);
-        int val = lv_slider_get_value(slider);
-        backlight_set((uint8_t)val);
-    }
-}
-static lv_obj_t* add_menu_row(lv_obj_t *parent, const char *title, const char *subtitle){
-    lv_obj_t *row = lv_btn_create(parent);
-    lv_obj_set_width(row, lv_pct(100));
-    lv_obj_set_height(row, 60);
-    lv_obj_set_style_pad_all(row, 10, 0);
-    lv_obj_set_style_radius(row, 20, 0);
-    lv_obj_set_style_bg_opa(row, LV_OPA_20, 0);
-    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_style_pad_column(row, 8, 0);
-    lv_obj_t *lbl = lv_label_create(row);
-    if(subtitle) lv_label_set_text_fmt(lbl, "%s\n%s", title, subtitle);
-    else lv_label_set_text(lbl, title);
-    lv_obj_set_flex_grow(lbl, 1);
-    return row;
-}
-static lv_obj_t* create_row(lv_obj_t *parent, const char *title, bool has_switch)
-{
-    lv_obj_t *row = lv_btn_create(parent);
-    lv_obj_set_size(row, lv_pct(100), 55);
-    lv_obj_set_style_bg_color(row, lv_color_hex(0x3a3a3a), 0);
-    lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(row, 20, 0);
-    lv_obj_set_style_border_width(row, 0, 0);
-    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_style_pad_all(row, 10, 0);
-
-    lv_obj_t *lbl = lv_label_create(row);
-    lv_label_set_text(lbl, title);
-    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
-    lv_obj_set_flex_grow(lbl, 1);
-
-    if (has_switch) {
-        lv_obj_t *sw = lv_switch_create(row);
-        lv_obj_set_style_bg_color(sw, lv_color_hex(0x555555), LV_PART_MAIN);
-        lv_obj_set_style_bg_opa(sw, LV_OPA_COVER, LV_PART_MAIN);
-    }
-
-    return row;
-}
-
-
-static void build_ui(void)
-{
-// ----------- UI BUILDERS -----------
-static void calendar_event_cb(lv_event_t *e) {
-    lv_obj_t *btn = lv_event_get_target(e);
-    if (lv_event_get_code(e) == LV_EVENT_CLICKED) {
-        lv_label_set_text(lv_obj_get_child(btn, 1), "Opened!");
-    }
-}
-
-static void build_ui(void) {
-    lv_obj_t *scr = lv_scr_act();
-    lv_obj_set_style_bg_color(scr, lv_color_hex(0x000000), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
-
-    // ----- Header -----
-    lv_obj_t *header = lv_obj_create(scr);
-    lv_obj_set_size(header, lv_pct(100), 40);
-    lv_obj_set_style_bg_color(header, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_bg_opa(header, LV_OPA_TRANSP, 0);
-    lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_border_width(header, 0, 0);
-
-    // Nastav čierne pozadie celej obrazovky
-    lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
-
-    lv_obj_t *container = lv_obj_create(scr);
-    lv_obj_set_width(container, LV_PCT(100));
-    lv_obj_set_height(container, LV_SIZE_CONTENT);  // dynamická výška podľa obsahu
-
-    // Povolené vertikálne scrollovanie
-    lv_obj_set_scroll_dir(container, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(container, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_scroll_snap_y(container, LV_SCROLL_SNAP_NONE);
-
-    // Flex flow - vertikálny stĺpec
-    lv_obj_set_flex_flow(container, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(container, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-
-    // Paddingy
-    lv_obj_set_style_pad_row(container, 10, 0);
-    lv_obj_set_style_pad_column(container, 0, 0);
-    lv_obj_set_style_border_width(container, 0, 0);
-    lv_obj_set_style_bg_color(container, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(container, LV_OPA_COVER, 0);
-
-
-
-    // Nastavenie čierneho pozadia pre kontajner
-    lv_obj_set_style_bg_color(container, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(container, LV_OPA_COVER, 0);
-
-    lv_obj_t *title_lbl = lv_label_create(header);
-    lv_label_set_text(title_lbl, "Settings");
-    lv_obj_align(title_lbl, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_text_color(title_lbl, lv_color_white(), 0);
-    // Menu nadpis v bielej farbe
-    lv_obj_t *menu_lbl = lv_label_create(container);
-    lv_label_set_text(menu_lbl, "Menu");
-    lv_obj_set_style_text_color(menu_lbl, lv_color_white(), 0);
-    lv_obj_set_style_text_align(menu_lbl, LV_TEXT_ALIGN_CENTER, 0);
-    
-
-    // ----- Menu container -----
-    lv_obj_t *menu_page = lv_obj_create(scr);
-    lv_obj_set_size(menu_page, lv_pct(100), LCD_HEIGHT - 40);
-    lv_obj_align(menu_page, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_set_style_bg_color(menu_page, lv_color_hex(0x000000), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(menu_page, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_flex_flow(menu_page, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_all(menu_page, 10, 0);
-    lv_obj_set_style_pad_row(menu_page, 10, 0);
-    lv_obj_clear_flag(menu_page, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_border_width(menu_page, 0, 0);
-
-    // ----- Add rows -----
-    create_row(menu_page, "Bluetooth", true);
-    create_row(menu_page, "Brightness", false);
-    create_row(menu_page, "Factory reset", false);
-    // Calendar ikona + popis
-    lv_obj_t *calendar_img = lv_img_create(container);
-    lv_img_set_src(calendar_img, &Calendar);
-    lv_obj_set_size(calendar_img, 90, 90);
-    lv_obj_center(calendar_img);
-
-    lv_obj_t *calendar_lbl = lv_label_create(container);
-    lv_label_set_text(calendar_lbl, "Calendar");
-    lv_obj_set_style_text_color(calendar_lbl, lv_color_white(), 0);
-    lv_obj_set_style_text_align(calendar_lbl, LV_TEXT_ALIGN_CENTER, 0);
-
-    // Activity ikona + popis
-    lv_obj_t *activity = lv_img_create(container);
-    lv_img_set_src(activity, &Activity);   
-    lv_obj_set_size(activity, 90, 90);
-    lv_obj_center(activity);
-
-    lv_obj_t *activity_lbl = lv_label_create(container);
-    lv_label_set_text(activity_lbl, "Activity");
-    lv_obj_set_style_text_color(activity_lbl, lv_color_white(), 0);
-    lv_obj_set_style_text_align(activity_lbl, LV_TEXT_ALIGN_CENTER, 0);
-
-    // Settings ikona + popis
-    lv_obj_t *settings = lv_img_create(container);
-    lv_img_set_src(settings, &Settings);   
-    lv_obj_set_size(settings, 90, 90);
-    lv_obj_center(settings);
-
-    lv_obj_t *settings_lbl = lv_label_create(container);
-    lv_label_set_text(settings_lbl, "Settings");
-    lv_obj_set_style_text_color(settings_lbl, lv_color_white(), 0);
-    lv_obj_set_style_text_align(settings_lbl, LV_TEXT_ALIGN_CENTER, 0);
-
-    // Calculator ikona + popis
-    lv_obj_t *calculator = lv_img_create(container);
-    lv_img_set_src(calculator, &Calculator);   
-    lv_obj_set_size(calculator, 90, 90);
-    lv_obj_center(calculator);
-
-    lv_obj_t *calculator_lbl = lv_label_create(container);
-    lv_label_set_text(calculator_lbl, "Calculator");
-    lv_obj_set_style_text_color(calculator_lbl, lv_color_white(), 0);
-    lv_obj_set_style_text_align(calculator_lbl, LV_TEXT_ALIGN_CENTER, 0);
-}
-
-
-
 // ----------- FREERTOS TASKS -----------
 static void clock_task(void *arg) {
     (void)arg;
@@ -373,7 +192,6 @@ static void clock_task(void *arg) {
             char buf[16];
             snprintf(buf, sizeof(buf), "%02d:%02d:%02d", now.tm_hour, now.tm_min, now.tm_sec);
             gui_lock();
-            if(header_time_lbl) lv_label_set_text(header_time_lbl, buf);
             time_screen_update(buf);
             gui_unlock();
         }
@@ -486,7 +304,10 @@ void app_main(void) {
     // Initialize screen & UI
     time_screen_init();
 
-    gui_lock(); build_ui(); gui_unlock();
+    // Choose which screen to build
+    gui_lock();
+    build_menu_screen();        // or build_settings_screen();
+    gui_unlock();
 
     // Start FreeRTOS tasks
     touch_evt_queue = xQueueCreate(8, 1);
@@ -497,10 +318,10 @@ void app_main(void) {
     while (1) {
         gui_lock(); lv_timer_handler(); gui_unlock();
         uint32_t now = lv_tick_get();
-        if (g_backlight_on && now - g_last_activity_ms > 10000) {
+        if (g_backlight_on && now - g_last_activity_ms > 30000) { // 30 sec timeout
             backlight_set(0);
             g_backlight_on = false;
         }
-        vTaskDelay(pdMS_TO_TICKS(5));
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
