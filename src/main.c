@@ -1,3 +1,4 @@
+
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -202,60 +203,70 @@ static lv_obj_t* add_menu_row(lv_obj_t *parent, const char *title, const char *s
     lv_obj_set_flex_grow(lbl, 1);
     return row;
 }
-static void build_ui(void){
-    lv_obj_t *scr = lv_scr_act();
-    lv_obj_set_style_bg_color(scr, lv_color_hex(0x252424), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN); 
-    
+static lv_obj_t* create_row(lv_obj_t *parent, const char *title, bool has_switch)
+{
+    lv_obj_t *row = lv_btn_create(parent);
+    lv_obj_set_size(row, lv_pct(100), 55);
+    lv_obj_set_style_bg_color(row, lv_color_hex(0x3a3a3a), 0);
+    lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(row, 20, 0);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_all(row, 10, 0);
 
-    // Header
+    lv_obj_t *lbl = lv_label_create(row);
+    lv_label_set_text(lbl, title);
+    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
+    lv_obj_set_flex_grow(lbl, 1);
+
+    if (has_switch) {
+        lv_obj_t *sw = lv_switch_create(row);
+        lv_obj_set_style_bg_color(sw, lv_color_hex(0x555555), LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(sw, LV_OPA_COVER, LV_PART_MAIN);
+    }
+
+    return row;
+}
+
+
+static void build_ui(void)
+{
+    lv_obj_t *scr = lv_scr_act();
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x000000), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
+
+    // ----- Header -----
     lv_obj_t *header = lv_obj_create(scr);
     lv_obj_set_size(header, lv_pct(100), 40);
-    lv_obj_set_style_bg_opa(header, LV_OPA_20, 0);
-    lv_obj_set_style_pad_all(header, 8, 0);
-    lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_set_style_bg_color(header, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(header, LV_OPA_TRANSP, 0);
     lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
-    // lv_obj_set_style_bg_color(header, lv_color_hex(0x202833), LV_PART_MAIN);
-    // lv_obj_set_style_bg_opa(header, LV_OPA_COVER, LV_PART_MAIN);
-
-    header_time_lbl = lv_label_create(header);
-    lv_label_set_text(header_time_lbl, "--:--:--");
-    lv_obj_align(header_time_lbl, LV_ALIGN_RIGHT_MID, -6, 0);
+    lv_obj_set_style_border_width(header, 0, 0);
 
     lv_obj_t *title_lbl = lv_label_create(header);
     lv_label_set_text(title_lbl, "Settings");
-    lv_obj_align(title_lbl, LV_ALIGN_LEFT_MID, 6, 0);
+    lv_obj_align(title_lbl, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_text_color(title_lbl, lv_color_white(), 0);
 
-    // Menu
+    // ----- Menu container -----
     lv_obj_t *menu_page = lv_obj_create(scr);
     lv_obj_set_size(menu_page, lv_pct(100), LCD_HEIGHT - 40);
-    lv_obj_set_style_pad_all(menu_page, 8, 0);
-    lv_obj_set_style_pad_row(menu_page, 8, 0);
-    lv_obj_set_flex_flow(menu_page, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_scroll_dir(menu_page, LV_DIR_VER);
-    lv_obj_add_flag(menu_page, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scrollbar_mode(menu_page, LV_SCROLLBAR_MODE_AUTO);
     lv_obj_align(menu_page, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_set_style_bg_color(menu_page, lv_color_hex(0x252424), LV_PART_MAIN);//color_hex(0x1E2430)
+    lv_obj_set_style_bg_color(menu_page, lv_color_hex(0x000000), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(menu_page, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_flex_flow(menu_page, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_all(menu_page, 10, 0);
+    lv_obj_set_style_pad_row(menu_page, 10, 0);
+    lv_obj_clear_flag(menu_page, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_border_width(menu_page, 0, 0);
 
-    // Brightness row
-    {
-        lv_obj_t *r = add_menu_row(menu_page, "Brightness", NULL);
-        lv_obj_t *sl = lv_slider_create(r);
-        lv_slider_set_range(sl, 5, 100);
-        lv_slider_set_value(sl, 100, LV_ANIM_OFF);
-        lv_obj_set_width(sl, 100);
-        lv_obj_add_event_cb(sl, brightness_slider_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
-    }
-
-    // Time row
-    lv_obj_t *time_row = add_menu_row(menu_page, "Time", "Set clock");
-    lv_obj_add_event_cb(time_row, time_btn_event_cb, LV_EVENT_CLICKED, NULL);
-
-    (void)add_menu_row(menu_page, "Auto Brightness", NULL);
-    (void)add_menu_row(menu_page, "About", "Device info");
+    // ----- Add rows -----
+    create_row(menu_page, "Bluetooth", true);
+    create_row(menu_page, "Brightness", false);
+    create_row(menu_page, "Factory reset", false);
 }
+
 
 // ---------- Tasks ----------
 static void clock_task(void *arg){
