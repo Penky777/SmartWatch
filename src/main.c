@@ -23,6 +23,8 @@
 
 #include "icons/Calendar.h"
 #include "icons/Activity.h"
+#include "icons/Settings.h"
+#include "icons/Calculator.h"
 
 // ----------- PIN & BUS CONFIG -----------
 #define LCD_SCLK_GPIO   1
@@ -199,17 +201,29 @@ static void build_ui(void) {
     lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
 
-    // Hlavný centrálny stĺpcový kontajner
     lv_obj_t *container = lv_obj_create(scr);
-    lv_obj_set_size(container, LV_PCT(100), LV_PCT(200));
+    lv_obj_set_width(container, LV_PCT(100));
+    lv_obj_set_height(container, LV_SIZE_CONTENT);  // dynamická výška podľa obsahu
+
+    // Povolené vertikálne scrollovanie
+    lv_obj_set_scroll_dir(container, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(container, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_scroll_snap_y(container, LV_SCROLL_SNAP_NONE);
+
+    // Flex flow - vertikálny stĺpec
     lv_obj_set_flex_flow(container, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(container, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_center(container);
-    lv_obj_set_style_border_width(container, 0, 0); // úplné odstránenie rámu
 
-    
+    // Paddingy
+    lv_obj_set_style_pad_row(container, 10, 0);
+    lv_obj_set_style_pad_column(container, 0, 0);
+    lv_obj_set_style_border_width(container, 0, 0);
+    lv_obj_set_style_bg_color(container, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(container, LV_OPA_COVER, 0);
 
-    // Nastavenie čierneho pozadia pre kontajner (ak chceš)
+
+
+    // Nastavenie čierneho pozadia pre kontajner
     lv_obj_set_style_bg_color(container, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(container, LV_OPA_COVER, 0);
 
@@ -218,6 +232,7 @@ static void build_ui(void) {
     lv_label_set_text(menu_lbl, "Menu");
     lv_obj_set_style_text_color(menu_lbl, lv_color_white(), 0);
     lv_obj_set_style_text_align(menu_lbl, LV_TEXT_ALIGN_CENTER, 0);
+    
 
     // Calendar ikona + popis
     lv_obj_t *calendar_img = lv_img_create(container);
@@ -230,19 +245,38 @@ static void build_ui(void) {
     lv_obj_set_style_text_color(calendar_lbl, lv_color_white(), 0);
     lv_obj_set_style_text_align(calendar_lbl, LV_TEXT_ALIGN_CENTER, 0);
 
+    // Activity ikona + popis
     lv_obj_t *activity = lv_img_create(container);
-    lv_img_set_src(activity, &Activity);   // správny objekt a obrázok
+    lv_img_set_src(activity, &Activity);   
     lv_obj_set_size(activity, 90, 90);
     lv_obj_center(activity);
 
-
-    // Activity label (biele písmo)
     lv_obj_t *activity_lbl = lv_label_create(container);
     lv_label_set_text(activity_lbl, "Activity");
     lv_obj_set_style_text_color(activity_lbl, lv_color_white(), 0);
     lv_obj_set_style_text_align(activity_lbl, LV_TEXT_ALIGN_CENTER, 0);
 
-    // Prípadne pridať ikonu k activity, ak je k dispozícii
+    // Settings ikona + popis
+    lv_obj_t *settings = lv_img_create(container);
+    lv_img_set_src(settings, &Settings);   
+    lv_obj_set_size(settings, 90, 90);
+    lv_obj_center(settings);
+
+    lv_obj_t *settings_lbl = lv_label_create(container);
+    lv_label_set_text(settings_lbl, "Settings");
+    lv_obj_set_style_text_color(settings_lbl, lv_color_white(), 0);
+    lv_obj_set_style_text_align(settings_lbl, LV_TEXT_ALIGN_CENTER, 0);
+
+    // Calculator ikona + popis
+    lv_obj_t *calculator = lv_img_create(container);
+    lv_img_set_src(calculator, &Calculator);   
+    lv_obj_set_size(calculator, 90, 90);
+    lv_obj_center(calculator);
+
+    lv_obj_t *calculator_lbl = lv_label_create(container);
+    lv_label_set_text(calculator_lbl, "Calculator");
+    lv_obj_set_style_text_color(calculator_lbl, lv_color_white(), 0);
+    lv_obj_set_style_text_align(calculator_lbl, LV_TEXT_ALIGN_CENTER, 0);
 }
 
 
