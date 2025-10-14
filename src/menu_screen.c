@@ -36,11 +36,21 @@ static lv_obj_t* create_menu_button(lv_obj_t *parent, const void *icon_src, cons
     lv_obj_set_style_bg_opa(btn, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(btn, 0, 0);
     lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Remove border
+    lv_obj_set_style_border_width(btn, 0, 0);
+    lv_obj_set_style_border_color(btn, lv_color_black(), 0);
+    lv_obj_set_style_border_opa(btn, LV_OPA_TRANSP, 0);
+
+    // Remove shadow / outline
+    lv_obj_set_style_shadow_width(btn, 0, 0);
+    lv_obj_set_style_shadow_color(btn, lv_color_black(), 0);
+    lv_obj_set_style_shadow_opa(btn, LV_OPA_TRANSP, 0);
     lv_obj_set_flex_flow(btn, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_all(btn, 0, 0);
     lv_obj_set_style_pad_row(btn, 0, 0);
 
-    lv_obj_add_event_cb(btn, event_cb, LV_EVENT_CLICKED, NULL);
+     lv_obj_add_event_cb(btn, event_cb, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t *icon = lv_img_create(btn);
     lv_img_set_src(icon, icon_src);
@@ -51,7 +61,9 @@ static lv_obj_t* create_menu_button(lv_obj_t *parent, const void *icon_src, cons
     lv_label_set_text(lbl, label_text);
     lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
     lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
+    
 
+    
     return btn;
 }
 
@@ -68,19 +80,24 @@ void build_menu_screen(void) {
 
     lv_obj_t *container = lv_obj_create(scr);
     lv_obj_set_width(container, LV_PCT(100));
-    lv_obj_set_height(container, LV_SIZE_CONTENT);       // auto height
+    lv_obj_set_height(container, 600);       // height is set manual (auto height had bugs)
     lv_obj_set_scroll_dir(container, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(container, LV_SCROLLBAR_MODE_OFF);
     lv_obj_add_flag(container, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scroll_snap_y(container, LV_SCROLL_SNAP_NONE);
+    lv_obj_set_style_border_width(container, 2, 0);         // thickness: 2px
+    lv_obj_set_style_border_color(container, lv_color_black(), 0);
+    lv_obj_set_style_border_opa(container, LV_OPA_COVER, 0); // fully opaque
 
-// Background color
-lv_obj_set_style_bg_color(container, lv_color_black(), 0);
-lv_obj_set_style_bg_opa(container, LV_OPA_COVER, 0);
 
-// Flex alignment
-lv_obj_set_flex_flow(container, LV_FLEX_FLOW_COLUMN);
-lv_obj_set_flex_align(container, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER);
+
+    // Background color
+    lv_obj_set_style_bg_color(container, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(container, LV_OPA_COVER, 0);
+
+    // Flex alignment
+    lv_obj_set_flex_flow(container, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(container, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER);
 
     // Menu title
     lv_obj_t *menu_lbl = lv_label_create(container);
@@ -93,4 +110,5 @@ lv_obj_set_flex_align(container, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START, LV_F
     create_menu_button(container, &Activity, "Activity", activity_btn_event_cb);
     create_menu_button(container, &Settings, "Settings", settings_btn_event_cb);
     create_menu_button(container, &Calculator, "Calculator", calculator_btn_event_cb);
+    
 }
