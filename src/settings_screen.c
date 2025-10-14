@@ -1,4 +1,5 @@
 #include "lvgl.h"
+#include "menu_screen.h"
 
 static lv_obj_t* create_row(lv_obj_t *parent, const char *title) {
     lv_obj_t *row = lv_btn_create(parent);
@@ -18,6 +19,15 @@ static lv_obj_t* create_row(lv_obj_t *parent, const char *title) {
 
     return row;
 }
+static void settings_swipe_event_cb(lv_event_t *e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    if(code == LV_EVENT_GESTURE) {
+        lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_get_act());
+        if(dir == LV_DIR_LEFT || dir == LV_DIR_RIGHT) {
+            build_menu_screen();
+        }
+    }
+}
 
 void build_settings_screen(void) {
     lv_obj_t *scr = lv_scr_act();
@@ -25,8 +35,11 @@ void build_settings_screen(void) {
     // Set black background
     lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+    lv_obj_add_event_cb(scr, settings_swipe_event_cb, LV_EVENT_GESTURE, NULL);
 
     lv_obj_t *container = lv_obj_create(scr);
+
+    
     lv_obj_set_width(container, LV_PCT(100));
     lv_obj_set_height(container, LV_SIZE_CONTENT);
     lv_obj_set_scroll_dir(container, LV_DIR_VER);
@@ -50,4 +63,5 @@ void build_settings_screen(void) {
     create_row(container, "Bluetooth");
     create_row(container, "Brightness");
     create_row(container, "Factory reset");
+     lv_scr_load(scr);
 }
