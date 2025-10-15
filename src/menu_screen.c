@@ -32,7 +32,7 @@ static void calculator_btn_event_cb(lv_event_t *e) {
 // ---------- Helper: Create a menu button with icon + label ----------
 static lv_obj_t* create_menu_button(lv_obj_t *parent, const void *icon_src, const char *label_text, lv_event_cb_t event_cb) {
     lv_obj_t *btn = lv_btn_create(parent);
-    lv_obj_set_size(btn, 100, 120);
+    lv_obj_set_size(btn, 90, 120);
     lv_obj_set_style_bg_opa(btn, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(btn, 0, 0);
     lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
@@ -60,7 +60,7 @@ static lv_obj_t* create_menu_button(lv_obj_t *parent, const void *icon_src, cons
     lv_obj_t *lbl = lv_label_create(btn);
     lv_label_set_text(lbl, label_text);
     lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
-    lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER + 10, 0);
     
 
     
@@ -97,7 +97,7 @@ void build_menu_screen(void) {
 
     // Flex alignment
     lv_obj_set_flex_flow(container, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(container, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_flex_align(container, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
     // Menu title
     lv_obj_t *menu_lbl = lv_label_create(container);
