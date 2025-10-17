@@ -32,7 +32,7 @@ static void calculator_btn_event_cb(lv_event_t *e) {
 // ---------- Helper: Create a menu button with icon + label ----------
 static lv_obj_t* create_menu_button(lv_obj_t *parent, const void *icon_src, const char *label_text, lv_event_cb_t event_cb) {
     lv_obj_t *btn = lv_btn_create(parent);
-    lv_obj_set_size(btn, 90, 120);
+    lv_obj_set_size(btn, 120, 120);
     lv_obj_set_style_bg_opa(btn, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(btn, 0, 0);
     lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
@@ -54,16 +54,20 @@ static lv_obj_t* create_menu_button(lv_obj_t *parent, const void *icon_src, cons
 
     lv_obj_t *icon = lv_img_create(btn);
     lv_img_set_src(icon, icon_src);
-    lv_obj_set_size(icon, 90, 90);
+    lv_obj_set_size(icon, 120, 90);
     lv_obj_center(icon);
 
     lv_obj_t *lbl = lv_label_create(btn);
     lv_label_set_text(lbl, label_text);
     lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
-    lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER + 10, 0);
     
 
-    
+    lv_obj_set_width(lbl, LV_PCT(100));
+    lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_pad_row(btn, 6, 0);
+    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_20, 0);
+
+
     return btn;
 }
 
@@ -71,6 +75,8 @@ static lv_obj_t* create_menu_button(lv_obj_t *parent, const void *icon_src, cons
 void build_menu_screen(void) {
     // Make sure screen is clean before building
     lv_obj_clean(lv_scr_act());
+    
+
 
     lv_obj_t *scr = lv_scr_act();
 
@@ -88,8 +94,7 @@ void build_menu_screen(void) {
     lv_obj_set_style_border_width(container, 2, 0);         // thickness: 2px
     lv_obj_set_style_border_color(container, lv_color_black(), 0);
     lv_obj_set_style_border_opa(container, LV_OPA_COVER, 0); // fully opaque
-
-
+    
 
     // Background color
     lv_obj_set_style_bg_color(container, lv_color_black(), 0);
@@ -104,6 +109,9 @@ void build_menu_screen(void) {
     lv_label_set_text(menu_lbl, "Menu");
     lv_obj_set_style_text_color(menu_lbl, lv_color_white(), 0);
     lv_obj_set_style_text_align(menu_lbl, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_pad_bottom(menu_lbl, 10, 0);
+    lv_obj_set_style_text_font(menu_lbl, &lv_font_montserrat_28, 0);
+
 
     // Buttons
     create_menu_button(container, &Calendar, "Calendar", calendar_btn_event_cb);
