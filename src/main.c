@@ -305,8 +305,11 @@ void app_main(void) {
     time_screen_init();
 
     // Choose which screen to build
-    gui_lock();
-    build_menu_screen();        // or build_settings_screen();
+   gui_lock();
+    lv_obj_t *menu_scr = lv_obj_create(NULL);
+    build_menu_screen(menu_scr);
+    lv_scr_load(menu_scr);
+
     gui_unlock();
 
     // Start FreeRTOS tasks
