@@ -6,10 +6,51 @@
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
 
+#include "host/ble_uuid.h"
+
+
 static const char *TAG = "BLE_C6";
 
 static void ble_app_on_sync(void);
 static void ble_app_advertise(void);
+
+
+
+static const ble_uuid128_t gatt_svc_uuid =
+    BLE_UUID128_INIT(0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd, 0xef);
+
+static const ble_uuid128_t gatt_chr_rx_uuid =
+    BLE_UUID128_INIT(0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78, 0x90);
+
+static int ble_rx_write_cb(uint16_t conn_handle, uint16_t attr_handle,
+                           struct ble_gatt_access_ctxt *ctxt, void *arg)
+{
+    // Data written from phone is in ctxt->om (OS memory buffer)
+    uint16_t len = OS_MBUF_PKTLEN(ctxt->om);
+    uint8_t buf[128];
+    os_mbuf_copydata(ctxt->om, 0, len, buf);
+    buf[len] = '\0';
+
+    ESP_LOGI("BLE_RX", "Received data from phone: %s", buf);
+    return 0; // Success
+}
+
+static const struct ble_gatt_svc_def gatt_svcs[] = {
+    {
+        /*** Custom service definition ***/
+        .type = BLE_GATT_SVC_TYPE_PRIMARY,
+        .uuid = &gatt_svc_uuid.u,
+        .characteristics = (struct ble_gatt_chr_def[]) {
+            {
+                .uuid = &gatt_chr_rx_uuid.u,
+                .access_cb = ble_rx_write_cb,
+                .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
+            },
+            {0} /* No more characteristics */
+        },
+    },
+    {0} /* No more services */
+};
 
 // BLE host task
 void ble_host_task(void *param)
@@ -62,6 +103,10 @@ void bluetooth_init(void)
     // Initialize the default GATT and GAP services
     ble_svc_gap_init();
     ble_svc_gatt_init();
+
+
+    ble_gatts_count_cfg(gatt_svcs);
+    ble_gatts_add_svcs(gatt_svcs);
 
     // Start the NimBLE host task
     nimble_port_freertos_init(ble_host_task);
