@@ -97,6 +97,11 @@ static void brightness_row_event_cb(lv_event_t *e) {
 
 // ---------- Settings screen ----------
 void build_settings_screen(lv_obj_t *scr) {
+
+    lv_obj_t *old_scr = lv_scr_act();
+    if (old_scr != NULL) {
+        lv_obj_del(old_scr);
+    }
     lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
     lv_obj_add_event_cb(scr, settings_swipe_event_cb, LV_EVENT_GESTURE, NULL);

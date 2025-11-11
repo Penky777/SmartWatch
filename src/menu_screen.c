@@ -7,20 +7,22 @@
 // Forward declarations
 void build_settings_screen(lv_obj_t *scr);
 void build_menu_screen(lv_obj_t *scr);
+void build_calendar_screen(lv_obj_t *scr);
 
 // ---------- Event callbacks ----------
 
 // Settings button
 static void settings_btn_event_cb(lv_event_t *e) {
-    // Create a *new* LVGL screen for Settings
     lv_obj_t *settings_scr = lv_obj_create(NULL);
     build_settings_screen(settings_scr);
-    lv_scr_load(settings_scr);   // Switch to the new screen
+    lv_scr_load(settings_scr);   
 }
 
-// Placeholder callbacks for other icons
+// Calendar button
 static void calendar_btn_event_cb(lv_event_t *e) {
-    LV_LOG_USER("Calendar pressed");
+    lv_obj_t *calendar_scr = lv_obj_create(NULL);
+    build_calendar_screen(calendar_scr);
+    lv_scr_load(calendar_scr); 
 }
 static void activity_btn_event_cb(lv_event_t *e) {
     LV_LOG_USER("Activity pressed");
@@ -77,6 +79,12 @@ static lv_obj_t* create_menu_button(lv_obj_t *parent, const void *icon_src, cons
 
 // ---------- Main menu screen ----------
 void build_menu_screen(lv_obj_t *scr) {
+
+    lv_obj_t *old_scr = lv_scr_act();
+    if (old_scr != NULL) {
+        lv_obj_del(old_scr);
+    }
+    
     // Make the *screen* scrollable
     lv_obj_set_scroll_dir(scr, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(scr, LV_SCROLLBAR_MODE_OFF);

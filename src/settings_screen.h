@@ -4,6 +4,6 @@
 #include "lvgl.h"
 
 // Function to build the settings screen
-void build_settings_screen(void);
+void build_settings_screen(lv_obj_t *scr);
 
 #endif // SETTINGS_SCREEN_H

@@ -26,6 +26,10 @@
 #include "menu_screen.h"
 #include "settings_screen.h"
 
+#include "esp_sleep.h"
+#include "esp_pm.h"
+
+
 // ----------- PIN & BUS CONFIG -----------
 #define LCD_SCLK_GPIO   1
 #define LCD_MOSI_GPIO   2
@@ -99,6 +103,37 @@ static void backlight_set(uint8_t percent) {
     if (percent > 100) percent = 100;
     ESP_ERROR_CHECK(ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, (1023 * percent) / 100));
     ESP_ERROR_CHECK(ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0));
+}
+
+static void enter_light_sleep(void)
+{
+    ESP_LOGI(TAG, "Preparing to enter light sleep...");
+
+    // Turn off backlight
+    backlight_set(0);
+    g_backlight_on = false;
+
+    // Configure INT pin as input with pull-up
+    gpio_config_t io_conf = {
+        .pin_bit_mask = 1ULL << TP_INT_GPIO,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_NEGEDGE
+    };
+    ESP_ERROR_CHECK(gpio_config(&io_conf));
+
+    // Enable wakeup from GPIO interrupt in light sleep
+    ESP_ERROR_CHECK(esp_sleep_enable_ext1_wakeup(TP_INT_GPIO, 0));
+
+    // Small delay to settle hardware
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    ESP_LOGI(TAG, "Entering light sleep...");
+    esp_light_sleep_start();
+
+    ESP_LOGI(TAG, "Woke up from light sleep!");
+    // When waking up, touch task will handle updating g_last_activity_ms
 }
 
 // ----------- LVGL INTEGRATION -----------
@@ -230,6 +265,20 @@ static void touch_task(void *arg) {
 
 // ----------- MAIN FLOW -----------
 void app_main(void) {
+
+    esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+
+switch (cause) {
+    case ESP_SLEEP_WAKEUP_EXT0:
+        ESP_LOGI(TAG, "Woke up from touch interrupt (EXT0)");
+        break;
+    case ESP_SLEEP_WAKEUP_EXT1:
+        ESP_LOGI(TAG, "Woke up from EXT1 (multiple GPIOs)");
+        break;
+    default:
+        ESP_LOGI(TAG, "Normal power-on reset");
+        break;
+    }
     // SPI & Panel
     spi_bus_config_t buscfg = {
         .sclk_io_num = LCD_SCLK_GPIO,
@@ -332,10 +381,16 @@ ESP_ERROR_CHECK(ret);
     while (1) {
         gui_lock(); lv_timer_handler(); gui_unlock();
         uint32_t now = lv_tick_get();
-        if (g_backlight_on && now - g_last_activity_ms > 30000) { // 30 sec timeout
+        if (g_backlight_on && now - g_last_activity_ms > 10000) { // 10 sec timeout
             backlight_set(0);
             g_backlight_on = false;
+            
         }
+        // if (!g_backlight_on && (now - g_last_activity_ms > 1000)) {
+        //     gui_unlock(); // Ensure LVGL is unlocked
+        //     enter_light_sleep();
+        
+        // }
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
