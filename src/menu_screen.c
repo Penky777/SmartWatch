@@ -16,6 +16,7 @@ static void settings_btn_event_cb(lv_event_t *e) {
     lv_obj_t *settings_scr = lv_obj_create(NULL);
     build_settings_screen(settings_scr);
     lv_scr_load(settings_scr);   
+    
 }
 
 // Calendar button
