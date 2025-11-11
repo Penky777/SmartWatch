@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include "bluetooth.h"
 #include "nvs_flash.h"
+#include "ui_manager.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -99,7 +100,7 @@ static void backlight_init(void) {
     ESP_ERROR_CHECK(ledc_channel_config(&channel));
 }
 
-static void backlight_set(uint8_t percent) {
+void backlight_set(uint8_t percent) {
     if (percent > 100) percent = 100;
     ESP_ERROR_CHECK(ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, (1023 * percent) / 100));
     ESP_ERROR_CHECK(ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0));
@@ -352,15 +353,9 @@ switch (cause) {
     ESP_ERROR_CHECK(esp_timer_create(&tick_args, &tick_timer));
     ESP_ERROR_CHECK(esp_timer_start_periodic(tick_timer, LV_TICK_PERIOD_MS * 1000));
 
-    // Initialize screen & UI
-    time_screen_init();
-
-    // Choose which screen to build
-   gui_lock();
-    lv_obj_t *menu_scr = lv_obj_create(NULL);
-    build_menu_screen(menu_scr);
-    lv_scr_load(menu_scr);
-
+    ui_manager_init();
+    gui_lock();
+    ui_show_menu();
     gui_unlock();
 
     esp_err_t ret = nvs_flash_init();
