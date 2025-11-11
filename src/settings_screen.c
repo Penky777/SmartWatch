@@ -9,6 +9,7 @@ static void brightness_back_event_cb(lv_event_t *e);
 static void brightness_row_event_cb(lv_event_t *e);
 
 void build_settings_screen(lv_obj_t *scr);
+void build_factory_reset_screen(lv_obj_t *scr);
 
 // ---------- Helper: Create a row ----------
 static lv_obj_t* create_row(lv_obj_t *parent, const char *title, lv_event_cb_t cb) {
@@ -40,13 +41,24 @@ static void brightness_slider_event_cb(lv_event_t *e) {
     LV_LOG_USER("Brightness set to: %d", value);
 }
 
-// ---------- Back button callback ----------
-static void brightness_back_event_cb(lv_event_t *e) {
-    lv_obj_t *settings_scr = lv_obj_create(NULL);
-    build_settings_screen(settings_scr);
-    lv_scr_load(settings_scr);
+static void brightness_swipe_event_cb(lv_event_t *e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    if (code == LV_EVENT_GESTURE) {
+        lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_get_act());
+        if (dir == LV_DIR_RIGHT) {
+            // Get current screen
+            lv_obj_t *old_scr = lv_scr_act();
+            
+            // Create and load settings
+            lv_obj_t *settings_scr = lv_obj_create(NULL);
+            build_settings_screen(settings_scr);
+            lv_scr_load(settings_scr);
+            
+            // Delete old screen
+            lv_obj_del(old_scr);
+        }
+    }
 }
-
 // ---------- Brightness screen ----------
 static void build_brightness_screen(lv_obj_t *scr) {
     lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
@@ -66,13 +78,7 @@ static void build_brightness_screen(lv_obj_t *scr) {
     lv_slider_set_value(slider, 80, LV_ANIM_OFF);
     lv_obj_add_event_cb(slider, brightness_slider_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
-    // Back button
-    lv_obj_t *btn_back = lv_btn_create(scr);
-    lv_obj_align(btn_back, LV_ALIGN_BOTTOM_MID, 0, -20);
-    lv_obj_t *lbl = lv_label_create(btn_back);
-    lv_label_set_text(lbl, "Back");
-    lv_obj_center(lbl);
-    lv_obj_add_event_cb(btn_back, brightness_back_event_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(scr, brightness_swipe_event_cb, LV_EVENT_GESTURE, NULL);
 }
 
 // ---------- Swipe back to menu ----------
@@ -88,11 +94,17 @@ static void settings_swipe_event_cb(lv_event_t *e) {
     }
 }
 
+
 // ---------- Brightness row callback ----------
 static void brightness_row_event_cb(lv_event_t *e) {
     lv_obj_t *bright_scr = lv_obj_create(NULL);
     build_brightness_screen(bright_scr);
     lv_scr_load(bright_scr);
+}
+static void factory_reset_event_cb(lv_event_t *e) {
+    lv_obj_t *fact_scr = lv_obj_create(NULL);
+    build_factory_reset_screen(fact_scr);
+    lv_scr_load(fact_scr);
 }
 
 // ---------- Settings screen ----------
@@ -123,7 +135,34 @@ void build_settings_screen(lv_obj_t *scr) {
     // Rows
     create_row(scr, "Bluetooth", NULL);
     create_row(scr, "Brightness", brightness_row_event_cb);
-    create_row(scr, "Factory Reset", NULL);
+    create_row(scr, "Factory Reset", factory_reset_event_cb);
 
     lv_obj_scroll_to_y(scr, 0, LV_ANIM_OFF);
+}
+void build_factory_reset_screen(lv_obj_t *scr) {
+    lv_obj_set_size(scr, lv_pct(100), lv_pct(100)); 
+    lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+
+    // Title
+    lv_obj_t *title = lv_label_create(scr);
+    lv_label_set_text(title, "Factory Reset");
+    lv_obj_set_style_text_color(title, lv_color_white(), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 20);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_28, 0);
+
+
+    // Message
+    lv_obj_t *msg = lv_label_create(scr);
+    lv_obj_set_content_width(msg, lv_pct(100));
+    lv_label_set_text(msg, "Are you sure you want to reset to factory settings?");
+    lv_obj_set_style_text_color(msg, lv_color_white(), 0);
+    lv_obj_align(msg, LV_ALIGN_CENTER, 0,0);
+    lv_obj_set_style_pad_top(msg, 5, 0);
+    lv_obj_set_style_text_font(msg, &lv_font_montserrat_20, 0);
+
+
+    
+
+    // Buttons could be added here for confirmation
 }
