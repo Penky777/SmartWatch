@@ -39,6 +39,7 @@ static void settings_swipe_event_cb(lv_event_t *e) {
     }
 }
 
+
 // ---------- Brightness row ----------
 static void brightness_row_event_cb(lv_event_t *e) {
     (void)e;
