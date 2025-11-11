@@ -1,9 +1,4 @@
-#ifndef BRIGHTNESS_SCREEN_H
-#define BRIGHTNESS_SCREEN_H
-
+#pragma once
 #include "lvgl.h"
 
-// Now match lv_event_cb_t
-void brightness_screen_init(lv_event_t * e);
-
-#endif
+lv_obj_t *build_brightness_screen(void);

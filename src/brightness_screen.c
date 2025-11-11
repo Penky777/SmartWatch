@@ -1,60 +1,54 @@
-#include "brightness_screen.h"
 #include "lvgl.h"
-#include "settings_screen.h"
+#include "ui_manager.h"
+#include "backlight.h"
 
+// Forward declarations
+static void brightness_slider_event_cb(lv_event_t *e);
+static void swipe_back_event_cb(lv_event_t *e);
 
-// Keep a static handle to the slider (optional)
-static lv_obj_t *brightness_slider = NULL;
+lv_obj_t *build_brightness_screen(void) {
+    lv_obj_t *scr = lv_obj_create(NULL);
 
-// Event callback for the slider
+    // --- Style cleanup ---
+    lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(scr, 0, 0);
+    lv_obj_set_style_outline_width(scr, 0, 0);
+    lv_obj_set_style_pad_all(scr, 0, 0);
+    lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+
+    // --- Title ---
+    lv_obj_t *title = lv_label_create(scr);
+    lv_label_set_text(title, "Adjust Brightness");
+    lv_obj_set_style_text_color(title, lv_color_white(), 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 25);
+
+    // --- Slider ---
+    lv_obj_t *slider = lv_slider_create(scr);
+    lv_obj_set_size(slider, 200, 20);
+    lv_obj_align(slider, LV_ALIGN_CENTER, 0, 0);
+    lv_slider_set_range(slider, 5, 100);
+    lv_slider_set_value(slider, 100, LV_ANIM_OFF);
+    lv_obj_add_event_cb(slider, brightness_slider_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+    // --- Swipe gesture (to go back) ---
+    lv_obj_add_event_cb(scr, swipe_back_event_cb, LV_EVENT_GESTURE, NULL);
+
+    return scr;
+}
+
+// Handle brightness change
 static void brightness_slider_event_cb(lv_event_t *e) {
     lv_obj_t *slider = lv_event_get_target(e);
     int val = lv_slider_get_value(slider);
-
-    // Adjust backlight
-    extern void backlight_set(uint8_t p); // main.c has this
     backlight_set((uint8_t)val);
 }
 
-static void brightness_swipe_event_cb(lv_event_t *e) {
-    lv_event_code_t code = lv_event_get_code(e);
-    if (code == LV_EVENT_GESTURE) {
-        lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_get_act());
-        if (dir == LV_DIR_RIGHT) {
-            // Get current screen
-            lv_obj_t *old_scr = lv_scr_act();
-            
-            // Create and load settings
-            lv_obj_t *settings_scr = lv_obj_create(NULL);
-            build_settings_screen(settings_scr);
-            lv_scr_load(settings_scr);
-            
-            // Delete old screen
-            lv_obj_del(old_scr);
-        }
+// Handle right-swipe back to settings
+static void swipe_back_event_cb(lv_event_t *e) {
+    lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_get_act());
+    if (dir == LV_DIR_RIGHT) {
+        ui_show_settings(); // go back smoothly
     }
 }
-
-
-
-
-void brightness_screen_init(lv_event_t * e) {
-    // You can ignore the argument if you don't need it:
-    (void)e;
-
-    // Create new screen
-    lv_obj_t *scr = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
-
-    // Create slider
-    lv_obj_t *slider = lv_slider_create(scr);
-    lv_slider_set_range(slider, 5, 100);
-    lv_slider_set_value(slider, 100, LV_ANIM_OFF);
-    lv_obj_center(slider);
-    
-    lv_obj_add_event_cb(scr, brightness_swipe_event_cb, LV_EVENT_GESTURE, NULL);
-    
-
-    lv_scr_load(scr);
-}
-
