@@ -1,24 +1,22 @@
 import 'package:flutter/material.dart';
+import 'theme/app_theme.dart';
 import 'router.dart';
 
-void main() => runApp(const MyApp());
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const SmartWatchApp());
+}
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class SmartWatchApp extends StatelessWidget {
+  const SmartWatchApp({super.key});
   @override
   Widget build(BuildContext context) {
-    return MaterialApp.router(
-      title: 'ESP32-C6 Companion',
+    return MaterialApp(
+      title: 'SmartWatchApp',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF3B82F6),
-          brightness: Brightness.dark,
-        ),
-        scaffoldBackgroundColor: const Color(0xFF0B1220),
-      ),
-      routerConfig: appRouter,
+      theme: AppTheme.dark(),
+      onGenerateRoute: generateRoute,
+      initialRoute: AppRoutes.home,
     );
   }
 }

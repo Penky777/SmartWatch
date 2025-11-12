@@ -1,74 +1,170 @@
 import 'package:flutter/material.dart';
-import '../widgets/app_scaffold.dart';
+import '../widgets/screen_scafold.dart';
+import '../widgets/section_card.dart';
+import '../router.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
+
   @override
   Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-    return AppScaffold(
-      index: 0,
+    final items = [
+      _HomeItem(Icons.directions_run, "Aktivita", AppRoutes.activity),
+      _HomeItem(Icons.favorite, "Zdravie", AppRoutes.health),
+      _HomeItem(Icons.cloud, "Počasie", AppRoutes.weather),
+      _HomeItem(Icons.calendar_month, "Kalendár", AppRoutes.calendar),
+      _HomeItem(Icons.notifications, "Notifikácie", AppRoutes.notifications),
+      _HomeItem(Icons.watch, "Watchfaces", AppRoutes.watchfaces),
+      _HomeItem(Icons.settings, "Nastavenia", AppRoutes.settings),
+      _HomeItem(Icons.bluetooth, "Bluetooth", AppRoutes.ble),
+    ];
+
+    return ScreenScaffold(
+      title: "SmartWatch",
+      subtitle: "Všetko dôležité na jednom mieste",
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('12:34', style: text.displaySmall),
-              const SizedBox(height: 2),
-              Text('Streda • 24. 9.', style: text.labelMedium?.copyWith(color: Colors.white70)),
-            ]),
-            Row(children: const [
-              Icon(Icons.bluetooth_connected, size: 18, color: Colors.white70),
-              SizedBox(width: 8), Text('78%', style: TextStyle(color: Colors.white70)),
-            ]),
-          ]),
-          const SizedBox(height: 12),
-          Expanded(
-            child: GridView.count(
-              crossAxisCount: 2,
-              crossAxisSpacing: 8, mainAxisSpacing: 8, childAspectRatio: 1.4,
+          SectionCard(
+            title: "Rýchly prístup",
+            child: LayoutBuilder(
+              builder: (context, c) {
+                // šírka dlaždice ~120px → vyjde pekný počet stĺpcov
+                final cols = (c.maxWidth / 120).floor().clamp(3, 5);
+                return GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: items.length,
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: cols,
+                    mainAxisSpacing: 12,
+                    crossAxisSpacing: 12,
+                    childAspectRatio: 0.74, // trošku vyššie dlaždice
+                  ),
+                  itemBuilder: (_, i) => _HomeTile(item: items[i]),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 8),
+          SectionCard(
+            title: "Dnešné zhrnutie",
+            child: Row(
               children: const [
-                _StatCard(title:'Kroky', value:'4 230'),
-                _StatCard(title:'Kalórie', value:'560 kcal'),
-                _StatCard(title:'Tep', value:'72 bpm', sub:'Priemer 7d: 68'),
-                _StatCard(title:'SpO₂', value:'98%'),
+                Expanded(child: _SummaryTile(icon: Icons.directions_walk, label: "Kroky", value: "8 240")),
+                SizedBox(width: 12),
+                Expanded(child: _SummaryTile(icon: Icons.favorite, label: "Tep", value: "72 bpm")),
+                SizedBox(width: 12),
+                Expanded(child: _SummaryTile(icon: Icons.nightlight, label: "Spánok", value: "7h 25m")),
               ],
             ),
           ),
-          Row(children: [
-            Expanded(child: FilledButton(onPressed: (){
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Hľadám hodinky…')));
-            }, child: const Text('Pripojiť'))),
-            const SizedBox(width: 8),
-            Expanded(child: OutlinedButton(onPressed: (){}, child: const Text('Start stopky'))),
-            const SizedBox(width: 8),
-            Expanded(child: OutlinedButton(onPressed: (){}, child: const Text('AI otázka'))),
-          ]),
         ],
       ),
     );
   }
 }
 
-class _StatCard extends StatelessWidget {
-  final String title; final String value; final String? sub;
-  const _StatCard({required this.title, required this.value, this.sub});
+class _HomeItem {
+  final IconData icon;
+  final String label;
+  final String route;
+  _HomeItem(this.icon, this.label, this.route);
+}
+
+class _HomeTile extends StatelessWidget {
+  final _HomeItem item;
+  const _HomeTile({required this.item});
+
   @override
   Widget build(BuildContext context) {
-    final t = Theme.of(context).textTheme;
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(title, style: t.labelLarge?.copyWith(color: Colors.white70)),
-          const Spacer(),
-          Text(value, style: t.headlineSmall),
-          if (sub != null) ...[
-            const SizedBox(height: 4),
-            Text(sub!, style: t.bodySmall?.copyWith(color: Colors.white70)),
+    final cs = Theme.of(context).colorScheme;
+    return InkWell(
+      onTap: () => Navigator.pushNamed(context, item.route),
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        decoration: BoxDecoration(
+          color: cs.surface,
+          borderRadius: BorderRadius.circular(16),
+          // border: Border.all(...),  // odstránené
+          boxShadow: [
+            // jemný „glow“ namiesto rámčeka (voliteľné)
+            BoxShadow(
+              color: Colors.black.withOpacity(0.15),
+              blurRadius: 10,
+              spreadRadius: 0,
+              offset: const Offset(0, 4),
+            ),
           ],
-        ]),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              height: 44,
+              width: 44,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                // border: Border.all(...), // odstránené
+                color: cs.primary.withOpacity(0.08), // jemné pozadie ikony (voliteľné)
+              ),
+              alignment: Alignment.center,
+              child: Icon(item.icon, size: 20),
+            ),
+            const SizedBox(height: 6),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                item.label,
+                maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12, height: 1.1),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SummaryTile extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  const _SummaryTile({required this.icon, required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    final th = Theme.of(context).textTheme;
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: cs.surface,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 20),
+          const SizedBox(height: 6),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(value, style: th.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            maxLines: 1,
+            softWrap: false,
+            overflow: TextOverflow.ellipsis,
+            style: th.bodySmall?.copyWith(color: cs.onSurface.withOpacity(0.8)),
+          ),
+        ],
       ),
     );
   }

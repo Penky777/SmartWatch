@@ -4,7 +4,7 @@ import 'package:go_router/go_router.dart';
 class AppScaffold extends StatelessWidget {
   final Widget child;
   final int index;
-  const AppScaffold({super.key, required this.child, required this.index});
+  const AppScaffold({super.key, required this.child, required this.index, required AppBar appBar, required Column body});
 
   @override
   Widget build(BuildContext context) {
