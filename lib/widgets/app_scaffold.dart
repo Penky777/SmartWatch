@@ -1,32 +1,46 @@
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 
 class AppScaffold extends StatelessWidget {
-  final Widget child;
-  final int index;
-  const AppScaffold({super.key, required this.child, required this.index, required AppBar appBar, required Column body});
+  final PreferredSizeWidget? appBar;
+
+  /// Novšie použitie
+  final Widget? body;
+
+  /// Staršie použitie (alias na `body`)
+  final Widget? child;
+
+  final Widget? bottom;
+
+  /// Ak používaš index na spodnú navigáciu, nechávam ho tu (inak pokojne zmaž).
+  final int? index;
+
+  const AppScaffold({
+    super.key,
+    this.appBar,
+    this.body,
+    this.child,
+    this.bottom,
+    this.index,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final items = const [
-      (Icons.home,        '/',            'Domov'),
-      (Icons.favorite,    '/health',      'Zdravie'),
-      (Icons.timer,       '/activity',    'Aktivity'),
-      (Icons.calendar_month,'/calendar',  'Kalendár'),
-      (Icons.cloud,       '/weather',     'Počasie'),
-      (Icons.notifications,'/notifications','Notif'),
-      (Icons.watch,       '/watchfaces',  'Ciferníky'),
-      (Icons.settings,    '/settings',    'Nast.'),
-    ];
+    final cs = Theme.of(context).colorScheme;
+    final content = body ?? child ?? const SizedBox.shrink();
 
-    return Scaffold(
-      body: SafeArea(child: Padding(padding: const EdgeInsets.all(12), child: child)),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: index,
-        onDestinationSelected: (i) => context.go(items[i].$2),
-        destinations: [
-          for (final it in items) NavigationDestination(icon: Icon(it.$1), label: it.$3),
-        ],
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [cs.primary.withOpacity(0.12), Colors.transparent],
+          begin: Alignment.topCenter,
+          end: Alignment.center,
+        ),
+      ),
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        appBar: appBar,
+        body: SafeArea(child: content),
+        bottomNavigationBar: bottom,
       ),
     );
   }

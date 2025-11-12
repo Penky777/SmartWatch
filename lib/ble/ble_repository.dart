@@ -13,13 +13,14 @@ class BleRepository {
   final _statusCtrl = StreamController<BleStatus>.broadcast();
   BleStatus _status = BleStatus.idle;
   String? _deviceId;
+
   StreamSubscription<DiscoveredDevice>? _scanSub;
   StreamSubscription<ConnectionStateUpdate>? _connSub;
   StreamSubscription<List<int>>? _notifySub;
+  Timer? _scanTimeout;
 
   Stream<BleStatus> get status => _statusCtrl.stream;
   String? get deviceId => _deviceId;
-
 
   void _set(BleStatus s) {
     _status = s;
@@ -27,55 +28,86 @@ class BleRepository {
   }
 
   void dispose() {
+    _scanTimeout?.cancel();
     _scanSub?.cancel();
     _connSub?.cancel();
     _notifySub?.cancel();
     _statusCtrl.close();
   }
 
+  /// Spusti scan a vráť broadcast stream zariadení.
+  /// Repo si drží subscription (cez onListen), aby šlo scan neskôr stopnúť.
   Stream<DiscoveredDevice> startScan({Duration? timeout}) {
     _set(BleStatus.scanning);
-    final stream = _client.scanForDevices(service: BleUUIDs.service);
-    if (timeout != null) {
-      // Caller si prípadne spraví take(1) a podobne
-      Future.delayed(timeout, stopScan);
-    }
-    _scanSub = stream.listen((_) {}, onError: (_) => _set(BleStatus.error));
-    return stream;
+
+    final src = _client.scanForDevices(service: BleUUIDs.service);
+
+    // Z broadcastu vieme zachytiť subscription aj zrušenie.
+    final bcast = src.asBroadcastStream(
+      onListen: (sub) {
+        _scanSub = sub;
+        if (timeout != null) {
+          _scanTimeout?.cancel();
+          _scanTimeout = Timer(timeout, stopScan);
+        }
+      },
+      onCancel: (sub) {
+        _scanSub = null;
+        _scanTimeout?.cancel();
+        _scanTimeout = null;
+        if (_status == BleStatus.scanning) _set(BleStatus.idle);
+      },
+    );
+
+    return bcast;
   }
 
   Future<void> stopScan() async {
     await _scanSub?.cancel();
     _scanSub = null;
+    _scanTimeout?.cancel();
+    _scanTimeout = null;
     if (_status == BleStatus.scanning) _set(BleStatus.idle);
   }
 
   Future<void> connect(String id) async {
+    // pre istotu ukonči scan
+    await stopScan();
+
     _set(BleStatus.connecting);
     _deviceId = id;
 
-    _connSub?.cancel();
+    await _connSub?.cancel();
     _connSub = _client.connectionStream(id).listen((event) async {
       switch (event.connectionState) {
         case DeviceConnectionState.connected:
           _set(BleStatus.connected);
           // MTU pre väčšie payloady (nie je garantované)
-          await _client.requestMtu(id, 247);
+          try { await _client.requestMtu(id, 247); } catch (_) {}
           // SUBSCRIBE na notifikácie z TX
-          _notifySub?.cancel();
-          _notifySub = _client.subscribe(deviceId: id, service: BleUUIDs.service, characteristic: BleUUIDs.txChar)
-              .listen((data) {
-            // tu príde payload z hodiniek (ESP32->mobil)
-            // TODO: deleguj do vyššej vrstvy / streamu
-          }, onError: (_) => _set(BleStatus.error));
+          await _notifySub?.cancel();
+          _notifySub = _client.subscribe(
+            deviceId: id,
+            service: BleUUIDs.service,
+            characteristic: BleUUIDs.txChar,
+          ).listen(
+                (data) {
+              // TODO: propaguj ďalej (napr. cez vlastný StreamController)
+            },
+            onError: (_) => _set(BleStatus.error),
+          );
           break;
+
         case DeviceConnectionState.disconnected:
           _set(BleStatus.disconnected);
           break;
+
         case DeviceConnectionState.connecting:
           _set(BleStatus.connecting);
           break;
+
         case DeviceConnectionState.disconnecting:
+        // no-op
           break;
       }
     }, onError: (_) => _set(BleStatus.error));
