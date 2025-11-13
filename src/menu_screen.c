@@ -13,6 +13,28 @@ static void calendar_btn_event_cb(lv_event_t *e) { (void)e; ui_show_calendar(); 
 static void activity_btn_event_cb(lv_event_t *e) { (void)e; ui_show_activity(); }
 static void settings_btn_event_cb(lv_event_t *e) { (void)e; ui_show_settings(); }
 static void calculator_btn_event_cb(lv_event_t *e) { (void)e; ui_show_calculator(); }
+// ---------- Event callbacks ----------
+
+// Settings button
+static void settings_btn_event_cb(lv_event_t *e) {
+    lv_obj_t *settings_scr = lv_obj_create(NULL);
+    build_settings_screen(settings_scr);
+    lv_scr_load(settings_scr);   
+    
+}
+
+// Calendar button
+static void calendar_btn_event_cb(lv_event_t *e) {
+    lv_obj_t *calendar_scr = lv_obj_create(NULL);
+    build_calendar_screen(calendar_scr);
+    lv_scr_load(calendar_scr); 
+}
+static void activity_btn_event_cb(lv_event_t *e) {
+    LV_LOG_USER("Activity pressed");
+}
+static void calculator_btn_event_cb(lv_event_t *e) {
+    LV_LOG_USER("Calculator pressed");
+}
 
 // ---------- Helper: Create a menu button ----------
 static lv_obj_t* create_menu_button(lv_obj_t *parent, const void *icon_src, const char *label_text, lv_event_cb_t event_cb) {
