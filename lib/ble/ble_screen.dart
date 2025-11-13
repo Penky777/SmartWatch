@@ -1,23 +1,27 @@
-import 'package:flutter/material.dart';
-import 'package:flutter_reactive_ble/flutter_reactive_ble.dart' hide BleStatus;
+// lib/ble/lib/ble_screen.dart
 
-import '../../ble/ble_client.dart';
-import '../../ble/ble_permissions.dart';
-import '../../ble/ble_repository.dart';
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
+
+import 'ble_permissions.dart'; // je v tom istom priečinku
 import '../../widgets/app_scaffold.dart';
-import '../../widgets/ble/device_tile.dart';
 import '../../widgets/status_badge.dart';
 
 class BleScreen extends StatefulWidget {
   const BleScreen({super.key});
+
   @override
   State<BleScreen> createState() => _BleScreenState();
 }
 
 class _BleScreenState extends State<BleScreen> {
-  final repo = BleRepository(BleClient());
-  final _devices = <DiscoveredDevice>[];
-  final _msgCtrl = TextEditingController();
+  final _ble = FlutterReactiveBle();
+  StreamSubscription<DiscoveredDevice>? _scanSub;
+
+  final List<DiscoveredDevice> _devices = [];
+  bool _isScanning = false;
 
   @override
   void initState() {
@@ -25,240 +29,164 @@ class _BleScreenState extends State<BleScreen> {
     _startScan();
   }
 
+  @override
+  void dispose() {
+    _scanSub?.cancel();
+    super.dispose();
+  }
+
   Future<void> _startScan() async {
+    // 1) permissions
     final ok = await ensureBlePermissions();
     if (!ok) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Bluetooth povolenia odmietnuté")),
+          const SnackBar(
+            content: Text('Bez povolení neviem hľadať BLE zariadenia.'),
+          ),
         );
       }
       return;
     }
-    _devices.clear();
-    repo.startScan(timeout: const Duration(seconds: 10)).listen((d) {
-      if (_devices.indexWhere((e) => e.id == d.id) == -1) {
-        if (mounted) setState(() => _devices.add(d));
+
+    // 2) počkaj, kým je BLE v stave ready
+    final status = await _ble.statusStream.first;
+    if (status != BleStatus.ready) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Bluetooth nie je pripravený: $status')),
+        );
       }
+      return;
+    }
+
+    // 3) spusti scan bez filtrov na služby
+    setState(() {
+      _isScanning = true;
+      _devices.clear();
     });
+
+    _scanSub?.cancel();
+
+    _scanSub = _ble
+        .scanForDevices(
+      withServices:
+      const [], // DÔLEŽITÉ: žiadne UUID filtre – nech vidíme všetko
+      scanMode: ScanMode.lowLatency,
+    )
+        .listen(
+          (device) {
+        // väčšina ESP/NimBLE projektov používa zmysluplné meno
+        if (device.name.isEmpty) return;
+
+        // TODO: keď budete vedieť presný názov hodiniek,
+        // uprav si tento filter, napr.:
+        // final isWatch = device.name.toLowerCase().startsWith('c6-watch');
+        final lowerName = device.name.toLowerCase();
+        final isWatch = lowerName.contains('watch') ||
+            lowerName.contains('esp') ||
+            lowerName.contains('smart');
+
+        if (!isWatch) {
+          // ak chceš, môžeš túto podmienku úplne vyhodiť
+          // aby si videl úplne všetky zariadenia
+          return;
+        }
+
+        final index = _devices.indexWhere((d) => d.id == device.id);
+        setState(() {
+          if (index == -1) {
+            _devices.add(device);
+          } else {
+            _devices[index] = device;
+          }
+        });
+      },
+      onError: (e) {
+        if (!mounted) return;
+        setState(() => _isScanning = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Chyba pri scane: $e')),
+        );
+      },
+      onDone: () {
+        if (!mounted) return;
+        setState(() => _isScanning = false);
+      },
+    );
   }
 
-  @override
-  void dispose() {
-    repo.dispose();
-    _msgCtrl.dispose();
-    super.dispose();
-  }
-
-  Widget _statusBadge(BleStatus s) {
-    switch (s) {
-      case BleStatus.connected:
-        return const StatusBadge.connected();
-      case BleStatus.connecting:
-        return const StatusBadge.connecting();
-      case BleStatus.scanning:
-        return const StatusBadge.custom(text: "Skenujem…", color: Colors.blue);
-      case BleStatus.disconnected:
-        return const StatusBadge.disconnected();
-      case BleStatus.error:
-        return const StatusBadge.custom(text: "Chyba", color: Colors.redAccent);
-      case BleStatus.idle:
-      default:
-        return const StatusBadge.custom(text: "Pripravené", color: Colors.grey);
-    }
-  }
-
-  String _statusLabel(BleStatus s) {
-    switch (s) {
-      case BleStatus.scanning:
-        return "Skenujem…";
-      case BleStatus.connecting:
-        return "Pripájanie…";
-      case BleStatus.connected:
-        return "Pripojené";
-      case BleStatus.disconnected:
-        return "Odpojené";
-      case BleStatus.error:
-        return "Chyba";
-      case BleStatus.idle:
-      default:
-        return "Pripravené";
-    }
+  void _stopScan() {
+    _scanSub?.cancel();
+    setState(() => _isScanning = false);
   }
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-
     return AppScaffold(
-      appBar: AppBar(
-        title: const Text("Hodinky • Bluetooth"),
-        actions: [
-          IconButton(
-            tooltip: "Skenovať",
-            onPressed: _startScan,
-            icon: const Icon(Icons.bluetooth_searching),
-          ),
-          const SizedBox(width: 6),
-        ],
-      ),
+      title: 'BLE hodinky',
+      actions: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: _isScanning
+              ? const StatusBadge.connecting()
+              : const StatusBadge.disconnected(),
+        ),
+      ],
+
       body: Column(
         children: [
-          // HLAVIČKA – ListTile bez overflowu
-          Padding(
-            padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
-            child: Material(
-              color: Colors.transparent,
-              child: ListTile(
-                dense: true,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-                leading: StreamBuilder<BleStatus>(
-                  stream: repo.status,
-                  initialData: BleStatus.idle,
-                  builder: (context, snap) {
-                    final s = snap.data ?? BleStatus.idle;
-                    return _statusBadge(s);
-                  },
-                ),
-                title: StreamBuilder<BleStatus>(
-                  stream: repo.status,
-                  initialData: BleStatus.idle,
-                  builder: (context, snap) {
-                    final s = snap.data ?? BleStatus.idle;
-                    return Text(
-                      "Stav: ${_statusLabel(s)}",
-                      maxLines: 1,
-                      softWrap: false,
-                      overflow: TextOverflow.ellipsis,
-                    );
-                  },
-                ),
-                trailing: StreamBuilder<BleStatus>(
-                  stream: repo.status,
-                  initialData: BleStatus.idle,
-                  builder: (context, snap) {
-                    final connected =
-                        snap.data == BleStatus.connected && repo.deviceId != null;
-                    if (!connected) return const SizedBox.shrink();
-
-                    final id = repo.deviceId!;
-                    final short =
-                    id.length > 8 ? "…${id.substring(id.length - 8)}" : id;
-
-                    return ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 140),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.watch, size: 18, color: cs.primary),
-                          const SizedBox(width: 6),
-                          Flexible(
-                            child: Text(
-                              short,
-                              maxLines: 1,
-                              softWrap: false,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontWeight: FontWeight.w600),
-                            ),
-                          ),
-                        ],
-                      ),
-                    );
-                  },
-                ),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              ElevatedButton.icon(
+                onPressed: _isScanning ? null : _startScan,
+                icon: const Icon(Icons.search),
+                label: const Text('Hľadať'),
               ),
-            ),
+              const SizedBox(width: 12),
+              OutlinedButton.icon(
+                onPressed: _isScanning ? _stopScan : null,
+                icon: const Icon(Icons.stop),
+                label: const Text('Stop'),
+              ),
+            ],
           ),
-
-          // ZOZNAM ZARIADENÍ
+          const Divider(),
           Expanded(
             child: _devices.isEmpty
-                ? Center(
-              child: Opacity(
-                opacity: 0.7,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: const [
-                    Icon(Icons.devices_other, size: 48),
-                    SizedBox(height: 10),
-                    Text("Žiadne zariadenia (skús obnoviť skenovanie)"),
-                  ],
-                ),
+                ? const Center(
+              child: Text(
+                'Nenašli sa žiadne hodinky.\n'
+                    'Skontroluj, že sú zapnuté a v blízkosti\n'
+                    'a že vysielajú BLE (advertising).',
+                textAlign: TextAlign.center,
               ),
             )
                 : ListView.builder(
               itemCount: _devices.length,
-              itemBuilder: (_, i) {
-                final d = _devices[i];
-                return DeviceTile(
-                  title: d.name,
-                  subtitle: d.id,
-                  rssi: d.rssi,
-                  onTap: () async {
-                    await repo.stopScan();
-                    await repo.connect(d.id);
+              itemBuilder: (context, index) {
+                final d = _devices[index];
+                return ListTile(
+                  leading: const Icon(Icons.watch),
+                  title: Text(d.name),
+                  subtitle: Text('ID: ${d.id}\nRSSI: ${d.rssi} dBm'),
+                  isThreeLine: true,
+                  onTap: () {
+                    // tu neskôr spravíme connectToDevice(d.id)
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Klikol si na: ${d.name}'),
+                      ),
+                    );
                   },
                 );
               },
             ),
           ),
-
-          // ODOSEL SPRÁVY
-          StreamBuilder<BleStatus>(
-            stream: repo.status,
-            initialData: BleStatus.idle,
-            builder: (context, snap) {
-              final isConnected =
-                  snap.data == BleStatus.connected && repo.deviceId != null;
-              if (!isConnected) return const SizedBox(height: 8);
-              return Padding(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _msgCtrl,
-                        textInputAction: TextInputAction.send,
-                        onSubmitted: (_) async => _send(),
-                        decoration: const InputDecoration(
-                          labelText: "Správa → hodinky",
-                          hintText: "napr. ping",
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    ElevatedButton.icon(
-                      onPressed: _send,
-                      icon: const Icon(Icons.send),
-                      label: const Text("Poslať"),
-                    ),
-                  ],
-                ),
-              );
-            },
-          ),
         ],
       ),
     );
-  }
-
-  Future<void> _send() async {
-    final txt = _msgCtrl.text.trim();
-    if (txt.isEmpty) return;
-    try {
-      await repo.sendString(txt);
-      _msgCtrl.clear();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Odoslané")),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Nepodarilo sa odoslať: $e")),
-        );
-      }
-    }
   }
 }

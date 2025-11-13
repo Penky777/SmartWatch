@@ -20,7 +20,7 @@ class AppScaffold extends StatelessWidget {
     this.body,
     this.child,
     this.bottom,
-    this.index,
+    this.index, required String title, required List<Padding> actions,
   });
 
   @override
