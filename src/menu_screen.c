@@ -55,10 +55,8 @@ static lv_obj_t* create_menu_button(lv_obj_t *parent, const void *icon_src, cons
 
 // ---------- Menu screen ----------
 lv_obj_t *build_menu_screen(void) {
-    static lv_obj_t *menu_scr = NULL;
-    if (menu_scr) return menu_scr;
-
-    menu_scr = lv_obj_create(NULL);
+    lv_obj_t *menu_scr = lv_obj_create(NULL);
+    
     lv_obj_set_scroll_dir(menu_scr, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(menu_scr, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_style_bg_color(menu_scr, lv_color_black(), 0);

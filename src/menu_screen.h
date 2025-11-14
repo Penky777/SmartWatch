@@ -3,6 +3,6 @@
 
 #include "lvgl.h"
 
-void build_menu_screen(lv_obj_t *scr);
+lv_obj_t *build_menu_screen(void);
 
 #endif

@@ -47,8 +47,34 @@ void ui_show_calculator(void) {
 
 
 
-void ui_show_menu(void)        { load_screen(&menu_scr,      build_menu_screen); }
-void ui_show_calendar(void)    { load_screen(&calendar_scr,  build_calendar_screen); }
+static void delete_screen_timer_cb(lv_timer_t *timer) {
+    lv_obj_t *scr = (lv_obj_t*)lv_timer_get_user_data(timer);
+    if (scr) {
+        lv_obj_del(scr);
+    }
+    lv_timer_del(timer);
+}
+
+void ui_show_menu(void) {
+    lv_obj_t *old_calendar = calendar_scr;
+    calendar_scr = NULL;
+    
+    load_screen(&menu_scr, build_menu_screen);
+    
+    // Delete old calendar after a short delay
+    if (old_calendar != NULL) {
+        lv_timer_t *timer = lv_timer_create(delete_screen_timer_cb, 100, old_calendar);
+        lv_timer_set_repeat_count(timer, 1);
+    }
+}
+void ui_show_calendar(void) {
+    // Always rebuild calendar with current date
+    if (calendar_scr != NULL) {
+        lv_obj_del(calendar_scr);
+        calendar_scr = NULL;
+    }
+    load_screen(&calendar_scr, build_calendar_screen);
+}
 void ui_show_activity(void)    { load_screen(&activity_scr,  build_activity_screen); }
 void ui_show_settings(void)    { load_screen(&settings_scr,  build_settings_screen); }
 
