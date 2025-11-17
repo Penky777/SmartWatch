@@ -365,7 +365,7 @@ switch (cause) {
     }
 ESP_ERROR_CHECK(ret);   
 
-    bluetooth_init();
+    
 
     // Start FreeRTOS tasks
     touch_evt_queue = xQueueCreate(8, 1);
