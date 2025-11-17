@@ -9,6 +9,17 @@ lv_obj_t *build_activity_screen(void);
 lv_obj_t *build_settings_screen(void);
 lv_obj_t *build_calculator_screen(void);
 
+static lv_obj_t *pair_scr = NULL;
+
+void ui_show_pairing(int pin)
+{
+    pair_scr = build_pairing_screen(pin);
+    lv_scr_load_anim(pair_scr, LV_SCR_LOAD_ANIM_FADE_ON, 200, 0, false);
+}
+
+
+
+
 
 
 
