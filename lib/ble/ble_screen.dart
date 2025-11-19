@@ -88,7 +88,7 @@ class _BleScreenState extends State<BleScreen> {
             lowerName.contains('smart');
 
         if (!isWatch) {
-          // ak chceš, môžeš túto podmienku úplne vyhodiť
+          // ak chceš, môžeš túto podmienku úplne vyhodiť,
           // aby si videl úplne všetky zariadenia
           return;
         }
@@ -124,16 +124,28 @@ class _BleScreenState extends State<BleScreen> {
   @override
   Widget build(BuildContext context) {
     return AppScaffold(
-      title: 'BLE hodinky',
-      actions: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          child: _isScanning
-              ? const StatusBadge.connecting()
-              : const StatusBadge.disconnected(),
-        ),
-      ],
-
+        title: 'BLE hodinky',
+        actions: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: IconButton(
+              icon: const Icon(Icons.settings),
+              tooltip: 'Nastavenia BLE',
+              onPressed: () {
+                // TODO: keď budeš mať BLE nastavenia, daj sem navigáciu
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('TODO: Nastavenia BLE')),
+                );
+              },
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: _isScanning
+                ? const StatusBadge.connecting()
+                : const StatusBadge.disconnected(),
+          ),
+        ],
       body: Column(
         children: [
           const SizedBox(height: 8),

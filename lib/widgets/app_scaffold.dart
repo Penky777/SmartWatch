@@ -1,7 +1,14 @@
 import 'package:flutter/material.dart';
 
 class AppScaffold extends StatelessWidget {
+  /// Ak chceš vlastný AppBar, môžeš ho sem poslať.
   final PreferredSizeWidget? appBar;
+
+  /// Titulok pre defaultný AppBar (použije sa len ak `appBar == null`).
+  final String? title;
+
+  /// Akcie vpravo hore v defaultnom AppBare.
+  final List<Widget>? actions;
 
   /// Novšie použitie
   final Widget? body;
@@ -17,10 +24,12 @@ class AppScaffold extends StatelessWidget {
   const AppScaffold({
     super.key,
     this.appBar,
+    this.title,
+    this.actions,
     this.body,
     this.child,
     this.bottom,
-    this.index, required String title, required List<Padding> actions,
+    this.index,
   });
 
   @override
@@ -38,7 +47,15 @@ class AppScaffold extends StatelessWidget {
       ),
       child: Scaffold(
         backgroundColor: Colors.transparent,
-        appBar: appBar,
+        appBar: appBar ??
+            AppBar(
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              automaticallyImplyLeading: Navigator.canPop(context),
+              title: Text(title ?? ''),
+              centerTitle: false,
+              actions: actions,
+            ),
         body: SafeArea(child: content),
         bottomNavigationBar: bottom,
       ),
