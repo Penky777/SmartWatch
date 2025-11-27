@@ -1,8 +1,6 @@
 #include "lvgl.h"
 #include "ui_manager.h"
 #include <stdio.h>
-
-// Include your icon headers
 #include "icons/steps_80.h"
 #include "icons/heart_19.h"
 #include "icons/blood_drip_21.h"

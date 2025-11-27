@@ -30,7 +30,7 @@
  *====================*/
 
 /* Size of the internal memory (in bytes) for LVGL */
-#define LV_MEM_SIZE        (32U * 1024U)   /* 32 KB is safe on ESP32-C6 */
+#define LV_MEM_SIZE        (32U * 1024U)   
 
 /*====================
    Text and fonts
@@ -60,8 +60,6 @@
 /*====================
    Others
  *====================*/
-
-/* Ticks: we call lv_tick_inc() every 10 ms in a FreeRTOS task */
 #define LV_TICK_CUSTOM     1
 #define LV_TICK_CUSTOM_SYS_TIME_EXPR (esp_timer_get_time()/1000)
 

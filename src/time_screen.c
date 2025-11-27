@@ -50,19 +50,11 @@ void time_screen_update(const char *time_str) {
 // Time button in menu pressed
 void time_btn_event_cb(lv_event_t *e) {
     LV_UNUSED(e);
-    main_menu_scr = lv_scr_act();  // store current menu screen
-    lv_scr_load(time_scr);         // show time screen
+    main_menu_scr = lv_scr_act();  
+    lv_scr_load(time_scr);         
 }
 
-// Back button pressed
-static void back_btn_event_cb(lv_event_t *e) {
-    LV_UNUSED(e);
-    if(main_menu_scr) {
-        lv_scr_load(main_menu_scr);
-    }
-}
-
-// Swipe detection (left/right) to go back
+// Swipe detection (right) to go back
 static void swipe_event_cb(lv_event_t *e) {
     lv_event_code_t code = lv_event_get_code(e);
     lv_indev_t *indev = lv_event_get_indev(e);

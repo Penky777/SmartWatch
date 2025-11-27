@@ -10,6 +10,7 @@ static lv_obj_t *settings_scr = NULL;
 static void bluetooth_toggle_event_cb(lv_event_t *e);
 static void brightness_row_event_cb(lv_event_t *e);
 static void settings_swipe_event_cb(lv_event_t *e);
+static void reset_btn_event_cb(lv_event_t *e);
 
 
 static lv_obj_t* create_row(lv_obj_t *parent, const char *title,
@@ -89,6 +90,15 @@ static void settings_swipe_event_cb(lv_event_t *e)
 }
 
 
+// Reset button callback
+
+static void reset_btn_event_cb(lv_event_t *e)
+{
+    (void)e;
+    ui_show_reset();
+}
+
+
 // Build Settings screen
 
 lv_obj_t *build_settings_screen(void)
@@ -127,7 +137,7 @@ lv_obj_t *build_settings_screen(void)
     create_row(settings_scr, "Brightness", NULL, brightness_row_event_cb);
 
     //  Factory Reset Row 
-    create_row(settings_scr, "Factory Reset", NULL, NULL);
+    create_row(settings_scr, "Factory Reset", NULL, reset_btn_event_cb);
 
     return settings_scr;
 }
