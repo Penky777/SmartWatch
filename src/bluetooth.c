@@ -7,6 +7,10 @@
 #include "services/gatt/ble_svc_gatt.h"
 
 #include <string.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/timers.h"
+
+#include "comm_manager.h"
 
 static const char *TAG = "BLE_C6";
 
@@ -14,6 +18,7 @@ static const char *TAG = "BLE_C6";
 static void ble_app_on_sync(void);
 static void ble_app_advertise(void);
 void ble_host_task(void *param);
+void bluetooth_send_bytes(const uint8_t *data, uint16_t len);
 
 //  Bluetooth state 
 static bool ble_enabled = false;
@@ -21,10 +26,36 @@ static bool ble_running = false;
 
 //  GATT SERVICE
 static const ble_uuid128_t gatt_svc_uuid =
-    BLE_UUID128_INIT(0x12,0x34,0x56,0x78,0x9a,0xbc,0xde,0xf0,0x12,0x34,0x56,0x78,0x90,0xab,0xcd,0xef);
+    BLE_UUID128_INIT(0xef,0xcd,0xab,0x90,0x78,0x56,0x34,0x12,0xf0,0xde,0xbc,0x9a,0x78,0x56,0x34,0x12);
 
 static const ble_uuid128_t gatt_chr_rx_uuid =
-    BLE_UUID128_INIT(0xab,0xcd,0xef,0x12,0x34,0x56,0x78,0x9a,0xbc,0xde,0xf0,0x12,0x34,0x56,0x78,0x90);
+    BLE_UUID128_INIT(0x90,0x78,0x56,0x34,0x12,0xf0,0xde,0xbc,0x9a,0x78,0x56,0x34,0x12,0xef,0xcd,0xab);
+
+// TX characteristic (Watch -> Phone) - notify/read
+static const ble_uuid128_t gatt_chr_tx_uuid =
+    BLE_UUID128_INIT(0x91,0x78,0x56,0x34,0x12,0xf0,0xde,0xbc,0x9a,0x78,0x56,0x34,0x12,0xef,0xcd,0xab);
+
+// Buffer for TX characteristic value
+#define BT_TX_MAX_LEN 240
+static uint8_t bt_tx_value[BT_TX_MAX_LEN];
+static int bt_tx_len = 0;
+static uint16_t bt_tx_val_handle = 0;
+
+// Timer for periodic test messages
+static TimerHandle_t bt_test_timer = NULL;
+static uint32_t bt_test_counter = 0;
+
+// Periodic test message callback (every 5 seconds)
+static void bt_test_timer_callback(TimerHandle_t xTimer)
+{
+    if (!ble_enabled || bt_tx_val_handle == 0) return;
+    
+    bt_test_counter++;
+    char msg[64];
+    snprintf(msg, sizeof(msg), "Test %lu", bt_test_counter);
+    bluetooth_send_bytes((const uint8_t *)msg, strlen(msg));
+    ESP_LOGI(TAG, "TX -> Phone: %s", msg);
+}
 
 static int ble_rx_write_cb(uint16_t conn_handle, uint16_t attr_handle,
                            struct ble_gatt_access_ctxt *ctxt, void *arg)
@@ -35,7 +66,20 @@ static int ble_rx_write_cb(uint16_t conn_handle, uint16_t attr_handle,
     buf[len] = '\0';
 
     ESP_LOGI(TAG, "RX <- Phone: %s", buf);
+    // Forward to comm manager (phone -> watch)
+    comm_manager_on_rx((const char *)buf);
+
     return 0;
+}
+
+// Read callback for TX characteristic: central reads current value
+static int ble_tx_read_cb(uint16_t conn_handle, uint16_t attr_handle,
+                          struct ble_gatt_access_ctxt *ctxt, void *arg)
+{
+    if (ctxt->op != BLE_GATT_ACCESS_OP_READ_CHR) return BLE_ATT_ERR_UNLIKELY;
+    if (bt_tx_len <= 0) return 0;
+    int rc = os_mbuf_copyinto(ctxt->om, 0, bt_tx_value, bt_tx_len);
+    return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
 }
 
 static const struct ble_gatt_svc_def gatt_svcs[] = {
@@ -44,9 +88,17 @@ static const struct ble_gatt_svc_def gatt_svcs[] = {
         .uuid = &gatt_svc_uuid.u,
         .characteristics = (struct ble_gatt_chr_def[]) {
             {
+                /* RX: phone -> watch (write) */
                 .uuid = &gatt_chr_rx_uuid.u,
                 .access_cb = ble_rx_write_cb,
                 .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
+            },
+            {
+                /* TX: watch -> phone (read + notify) */
+                .uuid = &gatt_chr_tx_uuid.u,
+                .access_cb = ble_tx_read_cb,
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
+                .val_handle = &bt_tx_val_handle,
             },
             {0}
         },
@@ -113,6 +165,14 @@ void bluetooth_enable(void)
         nimble_port_freertos_init(ble_host_task);
         ble_running = true;
     }
+
+    // Start periodic test timer (5000 ms = 5 seconds)
+    if (bt_test_timer == NULL) {
+        bt_test_timer = xTimerCreate("bt_test", pdMS_TO_TICKS(5000), pdTRUE, NULL, bt_test_timer_callback);
+    }
+    if (bt_test_timer != NULL) {
+        xTimerStart(bt_test_timer, 0);
+    }
 }
 
 //  PUBLIC API: DISABLE 
@@ -132,12 +192,33 @@ void bluetooth_disable(void)
         nimble_port_deinit();
         ble_running = false;
     }
+
+    // Stop periodic test timer
+    if (bt_test_timer != NULL) {
+        xTimerStop(bt_test_timer, 0);
+    }
 }
 
 // PUBLIC API 
 bool bluetooth_is_enabled(void)
 {
     return ble_enabled;
+}
+
+// Send bytes to connected centrals via GATT notification.
+// Copies up to BT_TX_MAX_LEN bytes into the characteristic value and
+// triggers a chr_updated which will send notifications to subscribed clients.
+void bluetooth_send_bytes(const uint8_t *data, uint16_t len)
+{
+    if (!ble_enabled) return;
+    if (bt_tx_val_handle == 0) return;
+
+    if (len > BT_TX_MAX_LEN) len = BT_TX_MAX_LEN;
+    memcpy(bt_tx_value, data, len);
+    bt_tx_len = len;
+
+    // Notify subscribed centrals. Use the value handle.
+    ble_gatts_chr_updated(bt_tx_val_handle);
 }
 
 //  DO NOT ENABLE BY DEFAULT 
