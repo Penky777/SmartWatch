@@ -4,6 +4,7 @@
 #include "icons/steps_80.h"
 #include "icons/heart_19.h"
 #include "icons/blood_drip_21.h"
+#include "max30102.h"
 
 static lv_obj_t *steps_label;
 static lv_obj_t *bpm_label;
@@ -12,6 +13,7 @@ static lv_obj_t *spo2_label;
 static void swipe_back_event_cb(lv_event_t *e);
 
 lv_obj_t *build_activity_screen(void) {
+    max_start();
     
     lv_obj_t *activity_scr = lv_obj_create(NULL);
     
@@ -84,6 +86,7 @@ void activity_screen_update(uint16_t steps, uint8_t bpm, uint8_t spo2) {
     snprintf(buf, sizeof(buf), "SpO2: %u%%", spo2);
     lv_label_set_text(spo2_label, buf);
 }
+
 static void swipe_back_event_cb(lv_event_t *e) {
     lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_get_act());
     if (dir == LV_DIR_RIGHT) {

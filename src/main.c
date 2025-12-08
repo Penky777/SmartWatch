@@ -29,6 +29,8 @@
 
 #include "esp_sleep.h"
 #include "esp_pm.h"
+#include "max30102.h"
+#include "activity_screen.h"
 
 // ---------------- PIN CONFIG ----------------
 #define LCD_SCLK_GPIO   1
@@ -62,6 +64,8 @@ static i2c_master_bus_handle_t g_i2c_bus = NULL;
 static i2c_master_dev_handle_t g_touch_dev = NULL;
 static QueueHandle_t touch_evt_queue = NULL;
 static SemaphoreHandle_t gui_mutex = NULL;
+static i2c_master_dev_handle_t g_max_dev = NULL;
+
 
 static lv_indev_t *indev_touch = NULL;
 static uint32_t g_last_activity_ms = 0;
@@ -343,6 +347,8 @@ void app_main(void) {
 
     ui_manager_init();
     gui_lock(); ui_show_menu(); gui_unlock();
+    max_set_ui_update_callback(activity_screen_update);
+    max_init(g_i2c_bus);
 
     // --- NVS ---
     esp_err_t ret = nvs_flash_init();
