@@ -10,6 +10,8 @@ typedef struct {
     bool valid;
 } max_data_t;
 
+
+
 esp_err_t max_init(i2c_master_bus_handle_t bus);
 void max_start(void);
 void max_stop(void);
