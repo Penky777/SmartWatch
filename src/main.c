@@ -31,6 +31,7 @@
 #include "esp_pm.h"
 #include "max30102.h"
 #include "activity_screen.h"
+#include "vibration.h"
 
 // ---------------- PIN CONFIG ----------------
 #define LCD_SCLK_GPIO   1
@@ -347,8 +348,11 @@ void app_main(void) {
 
     ui_manager_init();
     gui_lock(); ui_show_menu(); gui_unlock();
-    max_set_ui_update_callback(activity_screen_update);
-    max_init(g_i2c_bus);
+    //max_set_ui_update_callback(activity_screen_update);
+    // max_init(g_i2c_bus);
+    vibe_init();
+    vibe_pulse();
+
 
     // --- NVS ---
     esp_err_t ret = nvs_flash_init();

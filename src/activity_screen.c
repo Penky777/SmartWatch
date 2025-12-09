@@ -13,7 +13,7 @@ static lv_obj_t *spo2_label;
 static void swipe_back_event_cb(lv_event_t *e);
 
 lv_obj_t *build_activity_screen(void) {
-    max_start();
+    //max_start();
     
     lv_obj_t *activity_scr = lv_obj_create(NULL);
     
