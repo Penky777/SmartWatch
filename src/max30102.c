@@ -1,10 +1,10 @@
-// #include "max30102.h"
-// #include "freertos/FreeRTOS.h"
-// #include "freertos/task.h"
-// #include "esp_log.h"
-// #include "driver/i2c_master.h"
-// #include "max30102.h"       
-// #include <stdio.h>
+#include "max30102.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "esp_log.h"
+#include "driver/i2c_master.h"
+#include "max30102.h"       
+#include <stdio.h>
 
 // static const char *TAG = "MAX30102";
 
@@ -17,15 +17,15 @@
 
 // /* ------------------------ PUBLIC FUNCTIONS ------------------------- */
 
-// esp_err_t max_init(i2c_master_bus_handle_t bus)
-// {
-//     i2c_bus_ref = bus;
+esp_err_t max_init(i2c_master_bus_handle_t bus)
+{
+    i2c_bus_ref = bus;
 
-//     esp_err_t ret = max_init(bus);
-//     if (ret != ESP_OK) {
-//         ESP_LOGE(TAG, "MAX30102 Init failed");
-//         return ret;
-//     }
+    esp_err_t ret = max_init(bus);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "MAX30102 Init failed");
+        return ret;
+    }
 
 //     ESP_LOGI(TAG, "MAX30102 initialized");
 //     return ESP_OK;
@@ -36,7 +36,7 @@
 //     ui_callback = cb;
 // }
 
-// /* ------------------------ INTERNAL TASK --------------------------- */
+/* ------------------------ INTERNAL TASK --------------------------- */
 
 // static void max_task(void *arg)
 // {
@@ -49,11 +49,11 @@
 //             continue;
 //         }
 
-//         // Read sensor
-//         if (max_read(&data.spo2, &data.heart_rate))
-//             data.valid = true;
-//         else
-//             data.valid = false;
+        // Read sensor
+        if (max_read(&data.spo2, &data.heart_rate))
+            data.valid = true;
+        else
+            data.valid = false;
 
 //         fake_steps++;   // for demo
 
@@ -66,21 +66,21 @@
 
 // /* ------------------------ START/STOP SENSOR ------------------------ */
 
-// void max_start(void)
-// {
-//     if (!running) {
-//         running = true;
-//         max_start();
-//         ESP_LOGI(TAG, "MAX30102 started");
-//     }
-// }
+void max_start(void)
+{
+    if (!running) {
+        running = true;
+        max_start();
+        ESP_LOGI(TAG, "MAX30102 started");
+    }
+}
 
-// void max_stop(void)
-// {
-//     running = false;
-//     max_stop();
-//     ESP_LOGI(TAG, "MAX30102 stopped");
-// }
+void max_stop(void)
+{
+    running = false;
+    max_stop();
+    ESP_LOGI(TAG, "MAX30102 stopped");
+}
 
 // /* ----------------------- TASK CREATION ---------------------------- */
 
