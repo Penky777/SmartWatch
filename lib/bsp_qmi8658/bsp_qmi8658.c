@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "esp_log.h"
+#include "comm_manager.h"
 
 #include "bsp_i2c.h"
 
@@ -70,13 +71,23 @@ void bsp_qmi8658_init(i2c_master_bus_handle_t bus_handle)
         .device_address = QMI8658_SENSOR_ADDR,
         .scl_speed_hz = 400000,
     };
-    ESP_ERROR_CHECK(i2c_master_bus_add_device(bus_handle, &dev_cfg, &dev_handle));
-    
-    ESP_ERROR_CHECK(bsp_qmi8658_reg_read(QMI8658_WHO_AM_I, &id, 1));
-    
-    if (0x05 != id)
+    esp_err_t rc = i2c_master_bus_add_device(bus_handle, &dev_cfg, &dev_handle);
+    if (rc != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to add QMI8658 device to I2C bus: %d", rc);
+        return;
+    }
+
     {
-        ESP_LOGI(TAG, "QMI8658 not found");
+        esp_err_t rc2 = bsp_qmi8658_reg_read(QMI8658_WHO_AM_I, &id, 1);
+        if (rc2 != ESP_OK) {
+            ESP_LOGW(TAG, "QMI8658 WHO_AM_I read failed: %d", rc2);
+            // Do not abort startup; sensor may be absent or bus not ready.
+            return;
+        }
+        if (0x05 != id) {
+            ESP_LOGW(TAG, "QMI8658 not found (WHO_AM_I=0x%02x)", id);
+            return;
+        }
     }
     ESP_LOGI(TAG, "Find QMI8658");
     bsp_qmi8658_reg_write_byte(QMI8658_RESET, (uint8_t[]){0xb0}, 1); // 
@@ -92,9 +103,24 @@ static void qmi8658_test_task(void *arg)
     qmi8658_data_t data;
     while (1)
     {
-        bsp_qmi8658_read_data(&data);
-        printf("Acc: %6d %6d %6d  -----  Gyr: %6d %6d %6d  -----  Angle: %6.2f %6.2f %6.2f\n", data.acc_x, data.acc_y, data.acc_z, data.gyr_x, data.gyr_y, data.gyr_z, data.AngleX, data.AngleY, data.AngleZ);
-        vTaskDelay(pdMS_TO_TICKS(50));
+        if (bsp_qmi8658_read_data(&data)) {
+            char buf[160];
+            int n = snprintf(buf, sizeof(buf), "{\"acc\":[%d,%d,%d],\"gyr\":[%d,%d,%d],\"angle\":[%.2f,%.2f,%.2f]}\n",
+                             data.acc_x, data.acc_y, data.acc_z,
+                             data.gyr_x, data.gyr_y, data.gyr_z,
+                             data.AngleX, data.AngleY, data.AngleZ);
+
+            if (n > 0) {
+                // Print to serial (printf is safe here)
+                printf("%s", buf);
+
+                // Send over BLE (if connected/subscribed)
+                comm_send_str(buf);
+            }
+        }
+
+        // Delay to avoid flooding serial / BLE
+        vTaskDelay(pdMS_TO_TICKS(200));
     }
 }
 

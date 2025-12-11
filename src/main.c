@@ -11,6 +11,7 @@
 #include "freertos/semphr.h"
 #include "freertos/queue.h"
 #include "esp_log.h"
+#include "driver/uart.h"
 #include "esp_err.h"
 #include "esp_timer.h"
 #include "driver/gpio.h"
@@ -22,6 +23,7 @@
 #include "esp_lcd_panel_ops.h"
 #include "lvgl.h"
 #include "bsp_pcf85063.h"
+#include "bsp_qmi8658.h"
 #include "time_screen.h"
 
 #include "menu_screen.h"
@@ -259,6 +261,12 @@ static void touch_task(void *arg) {
 
 // ---------------- MAIN ----------------
 void app_main(void) {
+    // Early debug prints so serial monitor shows boot messages immediately
+    // Use printf (UART driver may not be installed yet).
+    printf("BOOT\n");
+    fflush(stdout);
+    ESP_LOGI(TAG, "App start - booting");
+
     esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
     switch (cause) {
         case ESP_SLEEP_WAKEUP_EXT0: ESP_LOGI(TAG, "Woke up from touch interrupt (EXT0)"); break;
@@ -308,6 +316,9 @@ void app_main(void) {
     // --- I2C & Touch ---
     ESP_ERROR_CHECK(i2c_bus_init());
     bsp_pcf85063_init(g_i2c_bus);
+    // Initialize and start QMI8658 (gyro/accel) self-test printing task
+    bsp_qmi8658_init(g_i2c_bus);
+    bsp_qmi8658_test();
 
     ESP_ERROR_CHECK(cst816_add_device());
     uint8_t id = 0;
