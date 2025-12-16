@@ -95,6 +95,9 @@ extern "C"
 void bsp_qmi8658_init(i2c_master_bus_handle_t bus_handle);
 void bsp_qmi8658_test(void);
 bool bsp_qmi8658_read_data(qmi8658_data_t *data);
+uint32_t bsp_qmi8658_read_steps(void);
+uint32_t bsp_qmi8658_get_software_steps(void);
+void bsp_qmi8658_start_step_detection(void);
 
 #ifdef __cplusplus
 }

@@ -318,6 +318,7 @@ void app_main(void) {
     bsp_pcf85063_init(g_i2c_bus);
     // Initialize and start QMI8658 (gyro/accel) self-test printing task
     bsp_qmi8658_init(g_i2c_bus);
+    bsp_qmi8658_start_step_detection();
     bsp_qmi8658_test();
 
     ESP_ERROR_CHECK(cst816_add_device());
@@ -372,6 +373,9 @@ void app_main(void) {
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
+
+    // --- Bluetooth ---
+    bluetooth_init();
 
     // --- FreeRTOS tasks ---
     touch_evt_queue = xQueueCreate(8, 1);

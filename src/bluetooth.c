@@ -51,10 +51,13 @@ static void bt_test_timer_callback(TimerHandle_t xTimer)
     if (!ble_enabled || bt_tx_val_handle == 0) return;
     
     bt_test_counter++;
-    char msg[64];
-    snprintf(msg, sizeof(msg), "Test %lu", bt_test_counter);
-    bluetooth_send_bytes((const uint8_t *)msg, strlen(msg));
-    ESP_LOGI(TAG, "TX -> Phone: %s", msg);
+    // Generate mock heart rate data (60-100 BPM)
+    int mock_hr = 60 + (bt_test_counter % 41);  // Cycles through 60-100
+    
+    char json_msg[64];
+    snprintf(json_msg, sizeof(json_msg), "{\"heartrate\": %d}", mock_hr);
+    bluetooth_send_bytes((const uint8_t *)json_msg, strlen(json_msg));
+    ESP_LOGI(TAG, "TX -> Phone: %s", json_msg);
 }
 
 static int ble_rx_write_cb(uint16_t conn_handle, uint16_t attr_handle,

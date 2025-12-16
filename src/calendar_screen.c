@@ -203,4 +203,3 @@ lv_obj_t *build_calendar_screen(void) {
     
     return scr;
 }
-

@@ -39,7 +39,7 @@ static void load_screen(lv_obj_t **slot, lv_obj_t *(*builder)(void)) {
     if (*slot == NULL) {
         *slot = builder();
     }
-    lv_scr_load_anim(*slot, LV_SCR_LOAD_ANIM_FADE_ON, 200, 0, false);
+    lv_scr_load_anim(*slot, LV_SCR_LOAD_ANIM_FADE_ON, 200, 0, true);
 }
 
 static void delete_screen_timer_cb(lv_timer_t *timer) {

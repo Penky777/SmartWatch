@@ -5,12 +5,16 @@
 #include "icons/heart_19.h"
 #include "icons/blood_drip_21.h"
 #include "max30102.h"
+#include "bsp_qmi8658.h"
 
 static lv_obj_t *steps_label;
 static lv_obj_t *bpm_label;
 static lv_obj_t *spo2_label;
 
+static lv_timer_t *activity_update_timer;
+
 static void swipe_back_event_cb(lv_event_t *e);
+static void activity_update_timer_cb(lv_timer_t *timer);
 
 lv_obj_t *build_activity_screen(void) {
     //max_start();
@@ -68,6 +72,9 @@ lv_obj_t *build_activity_screen(void) {
     
     lv_obj_add_event_cb(activity_scr, swipe_back_event_cb, LV_EVENT_GESTURE, NULL);
 
+    // Start timer to update activity data every second
+    activity_update_timer = lv_timer_create(activity_update_timer_cb, 1000, NULL);
+
     return activity_scr;
     
 }
@@ -77,14 +84,19 @@ void activity_screen_update(uint16_t steps, uint8_t bpm, uint8_t spo2) {
     
     char buf[32];
     
-    snprintf(buf, sizeof(buf), "Steps: %u", steps);
+    snprintf(buf, sizeof(buf), "%u", steps);
     lv_label_set_text(steps_label, buf);
 
-    snprintf(buf, sizeof(buf), "BPM: %u", bpm);
+    snprintf(buf, sizeof(buf), "%u", bpm);
     lv_label_set_text(bpm_label, buf);
 
-    snprintf(buf, sizeof(buf), "SpO2: %u%%", spo2);
+    snprintf(buf, sizeof(buf), "%u%%", spo2);
     lv_label_set_text(spo2_label, buf);
+}
+
+static void activity_update_timer_cb(lv_timer_t *timer) {
+    uint32_t steps = bsp_qmi8658_get_software_steps();
+    activity_screen_update(steps, 0, 0); // Update steps, keep bpm and spo2 as 0 for now
 }
 
 static void swipe_back_event_cb(lv_event_t *e) {
