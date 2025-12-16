@@ -11,6 +11,7 @@
 #include "freertos/timers.h"
 
 #include "comm_manager.h"
+#include "bsp_qmi8658.h"
 
 static const char *TAG = "BLE_C6";
 
@@ -54,8 +55,17 @@ static void bt_test_timer_callback(TimerHandle_t xTimer)
     // Generate mock heart rate data (60-100 BPM)
     int mock_hr = 60 + (bt_test_counter % 41);  // Cycles through 60-100
     
-    char json_msg[64];
-    snprintf(json_msg, sizeof(json_msg), "{\"heartrate\": %d}", mock_hr);
+    // Get current steps
+    uint32_t steps = bsp_qmi8658_get_software_steps();
+    
+    // Demo SpO2 (98%)
+    int spo2 = 98;
+    
+    // Demo battery (90% for now)
+    int battery = 90;
+    
+    char json_msg[128];
+    snprintf(json_msg, sizeof(json_msg), "{\"heartRate\":%d,\"steps\":%lu,\"spo2\":%d,\"battery\":%d}\n", mock_hr, steps, spo2, battery);
     bluetooth_send_bytes((const uint8_t *)json_msg, strlen(json_msg));
     ESP_LOGI(TAG, "TX -> Phone: %s", json_msg);
 }
