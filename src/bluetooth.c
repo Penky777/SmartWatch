@@ -75,7 +75,7 @@ static void bt_test_timer_callback(TimerHandle_t xTimer)
     // Demo battery (90% for now)
     int battery = 90;
     
-    char json_msg[128];
+    char json_msg[256];
     snprintf(json_msg, sizeof(json_msg), "{\"heartRate\":%d,\"steps\":%lu,\"spo2\":%d,\"battery\":%d}\n", mock_hr, steps, spo2, battery);
     bluetooth_send_bytes((const uint8_t *)json_msg, strlen(json_msg));
     ESP_LOGI(TAG, "TX -> Phone: %s", json_msg);
@@ -124,13 +124,13 @@ static const struct ble_gatt_svc_def gatt_svcs[] = {
                 /* RX: phone -> watch (write) */
                 .uuid = &gatt_chr_rx_uuid.u,
                 .access_cb = ble_rx_write_cb,
-                .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
+                .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP | BLE_GATT_CHR_F_WRITE_ENC,
             },
             {
                 /* TX: watch -> phone (read + notify) */
                 .uuid = &gatt_chr_tx_uuid.u,
                 .access_cb = ble_tx_read_cb,
-                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY | BLE_GATT_CHR_F_READ_ENC,
                 .val_handle = &bt_tx_val_handle,
             },
             {0}
@@ -205,8 +205,8 @@ static int ble_app_gap_event(struct ble_gap_event *event, void *arg)
             }
             break;
 
-        case BLE_GAP_EVENT_ENCRYPT_CHANGE:
-            if (event->encrypt_change.status == 0) {
+        case BLE_GAP_EVENT_ENC_CHANGE:
+            if (event->enc_change.status == 0) {
                 ESP_LOGI(TAG, "Encryption enabled");
                 pairing_confirmed = true;
                 ui_hide_pairing();
@@ -214,7 +214,7 @@ static int ble_app_gap_event(struct ble_gap_event *event, void *arg)
                     xTimerStop(pairing_timer, 0);
                 }
             } else {
-                ESP_LOGE(TAG, "Encryption failed: %d", event->encrypt_change.status);
+                ESP_LOGE(TAG, "Encryption failed: %d", event->enc_change.status);
                 ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
             }
             break;
@@ -308,16 +308,6 @@ void bluetooth_disable(void)
 bool bluetooth_is_enabled(void)
 {
     return ble_enabled;
-}
-
-// Confirm pairing
-void bluetooth_confirm_pairing(void)
-{
-    if (pairing_timer != NULL) {
-        xTimerStop(pairing_timer, 0);
-    }
-    pairing_confirmed = true;
-    ui_hide_pairing();
 }
 
 // Send bytes to connected centrals via GATT notification.
