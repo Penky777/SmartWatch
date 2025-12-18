@@ -30,6 +30,11 @@ class _BleScreenState extends State<BleScreen> {
   static final Uuid _txUuid =
   Uuid.parse('abcdef12-3456-789a-bcde-f01234567891');
 
+  // Pairing
+  static const Duration _pairingWindow = Duration(seconds: 30);
+  Timer? _pairingTimeout;
+  bool _pairingDialogOpen = false;
+
   final _ble = FlutterReactiveBle();
 
   // Scanning
@@ -52,6 +57,10 @@ class _BleScreenState extends State<BleScreen> {
   QualifiedCharacteristic? _rxChar;
   QualifiedCharacteristic? _txChar;
 
+  // Buffer na skladanie notifikácií (keď JSON príde po kusoch)
+  final List<int> _txBuffer = [];
+  static const int _maxBuffer = 4096;
+
   @override
   void initState() {
     super.initState();
@@ -63,6 +72,7 @@ class _BleScreenState extends State<BleScreen> {
     _scanSub?.cancel();
     _notifySub?.cancel();
     _connSub?.cancel();
+    _pairingTimeout?.cancel();
     _inputCtrl.dispose();
     super.dispose();
   }
@@ -73,7 +83,9 @@ class _BleScreenState extends State<BleScreen> {
     if (!ok) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Bez povolení neviem hľadať BLE zariadenia.')),
+        const SnackBar(
+          content: Text('Bez povolení neviem hľadať BLE zariadenia.'),
+        ),
       );
       return;
     }
@@ -96,7 +108,7 @@ class _BleScreenState extends State<BleScreen> {
 
     _scanSub = _ble
         .scanForDevices(
-      // DÔLEŽITÉ: ak chceš filtrovať LEN tvoju službu, odkomentuj:
+      // Ak chceš filtrovať LEN tvoju službu, použi:
       // withServices: [_svcUuid],
       withServices: const [],
       scanMode: ScanMode.lowLatency,
@@ -132,7 +144,6 @@ class _BleScreenState extends State<BleScreen> {
 
   // ============ Connect ============
   Future<void> _connect(String id) async {
-    // Odpoj staré spojenie
     await _disconnect();
 
     setState(() {
@@ -165,6 +176,11 @@ class _BleScreenState extends State<BleScreen> {
               _connected = true;
             });
 
+            // Reset buffer + pairing state
+            _txBuffer.clear();
+            _pairingTimeout?.cancel();
+            _pairingDialogOpen = false;
+
             // Nastav charakteristiky
             _rxChar = QualifiedCharacteristic(
               deviceId: id,
@@ -177,11 +193,6 @@ class _BleScreenState extends State<BleScreen> {
               characteristicId: _txUuid,
             );
 
-            // (voliteľne) discovery – nie je nutné pre reactive_ble, ale pri debugu sa zíde
-            // final services = await _ble.discoverServices(id);
-            // _pushLog('Discovered ${services.length} services');
-
-            // Subscribe na TX (NOTIFY z hodiniek)
             _subscribeToTx();
             break;
 
@@ -198,6 +209,7 @@ class _BleScreenState extends State<BleScreen> {
               _connecting = false;
               _connected = false;
             });
+            _pairingTimeout?.cancel();
             _notifySub?.cancel();
             break;
         }
@@ -213,6 +225,7 @@ class _BleScreenState extends State<BleScreen> {
   }
 
   Future<void> _disconnect() async {
+    _pairingTimeout?.cancel();
     await _notifySub?.cancel();
     await _connSub?.cancel();
     setState(() {
@@ -231,28 +244,165 @@ class _BleScreenState extends State<BleScreen> {
     _notifySub?.cancel();
     _notifySub = _ble.subscribeToCharacteristic(tx).listen(
           (data) {
-        // predpokladáme text/UTF-8; ak posielate binár, uprav podľa potreby
-        final msg = _safeUtf8(data);
-        _pushLog('WATCH -> PHONE: $msg');
+        // logni len dĺžku (pomôže pri MTU debug)
+        _pushLog('TX notify chunk len=${data.length}');
+        _handleTxData(data);
       },
       onError: (e) {
         _pushLog('NOTIFY ERROR: $e');
       },
     );
+
     _pushLog('Subscribed to TX notifications.');
   }
 
+  // ==== Pairing handling (TX) ====
+  void _handleTxData(List<int> chunk) {
+    if (chunk.isEmpty) return;
+
+    // buffer guard
+    if (_txBuffer.length + chunk.length > _maxBuffer) {
+      _txBuffer.clear();
+    }
+    _txBuffer.addAll(chunk);
+
+    // pokus: nájdi kompletný JSON objekt { ... }
+    while (true) {
+      final start = _txBuffer.indexOf(123); // '{'
+      if (start == -1) {
+        _txBuffer.clear();
+        return;
+      }
+
+      // zahod všetko pred '{'
+      if (start > 0) {
+        _txBuffer.removeRange(0, start);
+      }
+
+      final end = _txBuffer.lastIndexOf(125); // '}'
+      if (end == -1 || end <= 0) {
+        // ešte nemáme kompletný objekt
+        return;
+      }
+
+      final candidate = _txBuffer.sublist(0, end + 1);
+      final text = _safeUtf8(candidate).trim();
+
+      // skús parsovať JSON
+      try {
+        final obj = jsonDecode(text);
+        // odstráň spracovanú časť z bufferu
+        _txBuffer.removeRange(0, end + 1);
+
+        if (obj is Map && obj['pairing_pin'] != null) {
+          final pin = obj['pairing_pin'].toString();
+          _pushLog('PAIRING PIN received: $pin');
+          _onPairingPin(pin);
+        } else {
+          _pushLog('WATCH -> PHONE (json): $text');
+        }
+
+        // loop ďalej, možno je v bufferi ďalší JSON
+        continue;
+      } catch (_) {
+        // Ak to ešte nie je validné (napr. prišlo viac objektov/šum), skús nájsť skorší '}'.
+        // Vyhodíme prvý znak '{' a skúsime znovu (aby sme sa nezasekli).
+        _txBuffer.removeAt(0);
+        continue;
+      }
+    }
+  }
+
+  Future<void> _onPairingPin(String pin) async {
+    if (!_connected) return;
+    if (_pairingDialogOpen) return;
+
+    _pairingDialogOpen = true;
+
+    // timeout: ak user nič neurobí -> disconnect
+    _pairingTimeout?.cancel();
+    _pairingTimeout = Timer(_pairingWindow, () async {
+      if (!mounted) return;
+      _pushLog('Pairing timeout -> disconnect');
+      await _disconnect();
+    });
+
+    final accepted = await _showPairingDialog(pin);
+
+    _pairingTimeout?.cancel();
+
+    if (!_connected) {
+      _pairingDialogOpen = false;
+      return;
+    }
+
+    if (accepted) {
+      await _sendToWatch('confirm');
+      _pushLog('Pairing confirmed.');
+    } else {
+      _pushLog('Pairing rejected -> disconnect');
+      await _disconnect();
+    }
+
+    _pairingDialogOpen = false;
+  }
+
+  Future<bool> _showPairingDialog(String pin) async {
+    if (!mounted) return false;
+
+    final res = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('Pairing'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Potvrď spárovanie hodiniek:'),
+              const SizedBox(height: 12),
+              SelectableText(
+                pin,
+                style: const TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 2,
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text('Sedí tento PIN?'),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Nie'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Áno'),
+            ),
+          ],
+        );
+      },
+    );
+
+    return res == true;
+  }
+
+  // ==== TX/RX send ====
   Future<void> _sendToWatch(String text) async {
     final rx = _rxChar;
     if (!_connected || rx == null) {
       _pushLog('Nie som pripojený.');
       return;
     }
+
     final payload = utf8.encode(text);
+
     try {
-      // ak máš na RX povolené Write With Response, je lepšie použiť túto metódu:
       await _ble.writeCharacteristicWithResponse(rx, value: payload);
-      // alternatíva bez response: await _ble.writeCharacteristicWithoutResponse(rx, value: payload);
       _pushLog('PHONE -> WATCH: $text');
     } catch (e) {
       _pushLog('WRITE ERROR: $e');
@@ -262,13 +412,16 @@ class _BleScreenState extends State<BleScreen> {
   // ============ UI pomocníci ============
   void _pushLog(String line) {
     setState(() {
-      _log.insert(0, '${DateTime.now().toIso8601String().substring(11, 19)}  $line');
+      _log.insert(
+        0,
+        '${DateTime.now().toIso8601String().substring(11, 19)}  $line',
+      );
     });
   }
 
   String _safeUtf8(List<int> data) {
     try {
-      return utf8.decode(data);
+      return utf8.decode(data, allowMalformed: true);
     } catch (_) {
       return data.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ');
     }
@@ -292,7 +445,6 @@ class _BleScreenState extends State<BleScreen> {
       body: Column(
         children: [
           const SizedBox(height: 8),
-          // Scan / Stop
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
@@ -311,10 +463,8 @@ class _BleScreenState extends State<BleScreen> {
           ),
           const Divider(),
 
-          // Zoznam zariadení (ak nie som pripojený)
           if (!_connected) Expanded(child: _buildDeviceList()),
 
-          // Sekcia pripojenia a konzoly (ak som pripojený)
           if (_connected)
             Expanded(
               child: Column(
@@ -335,7 +485,7 @@ class _BleScreenState extends State<BleScreen> {
     if (_devices.isEmpty) {
       return const Center(
         child: Text(
-          'Zatiaľ nič.\nSkontroluj, že hodinky vysielajú advertising\nalebo zapni filter na service UUID.',
+          'Zatiaľ nič.\nSkontroluj, že hodinky vysielajú advertising.',
           textAlign: TextAlign.center,
         ),
       );

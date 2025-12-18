@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
 import 'ble_client.dart';
 import 'ble_uuids.dart';
+import 'dart:convert';
 
 enum BleStatus { idle, scanning, connecting, connected, disconnected, error }
 
@@ -22,6 +23,13 @@ class BleRepository {
   Stream<BleStatus> get status => _statusCtrl.stream;
   String? get deviceId => _deviceId;
 
+  final _pairingPinCtrl = StreamController<String>.broadcast();
+  Stream<String> get pairingPins => _pairingPinCtrl.stream;
+
+  Timer? _pairingTimeout;
+  static const Duration _pairingWindow = Duration(seconds: 30);
+
+
   void _set(BleStatus s) {
     _status = s;
     _statusCtrl.add(s);
@@ -33,6 +41,8 @@ class BleRepository {
     _connSub?.cancel();
     _notifySub?.cancel();
     _statusCtrl.close();
+    _pairingTimeout?.cancel();
+    _pairingPinCtrl.close();
   }
 
   /// Spusti scan a vráť broadcast stream zariadení.
@@ -92,7 +102,7 @@ class BleRepository {
             characteristic: BleUUIDs.txChar,
           ).listen(
                 (data) {
-              // TODO: propaguj ďalej (napr. cez vlastný StreamController)
+              _handleTxData(data);
             },
             onError: (_) => _set(BleStatus.error),
           );
@@ -133,4 +143,45 @@ class BleRepository {
       value: bytes,
     );
   }
+
+  void _handleTxData(List<int> data) {
+    // Ak hodinky posielajú JSON ako text
+    final text = utf8.decode(data, allowMalformed: true).trim();
+
+    // Skús JSON parse
+    try {
+      final obj = jsonDecode(text);
+      if (obj is Map && obj['pairing_pin'] != null) {
+        final pin = obj['pairing_pin'].toString();
+
+        // emitni PIN do UI
+        _pairingPinCtrl.add(pin);
+
+        // spusti/refreshni timeout – ak user nič neurobí, odpojíme
+        _pairingTimeout?.cancel();
+        _pairingTimeout = Timer(_pairingWindow, () async {
+          // timeout -> disconnect
+          await disconnect();
+        });
+
+        return;
+      }
+    } catch (_) {
+      // nie je JSON – ignor alebo spracuj inak
+    }
+
+    // sem si môžeš spracovať iné správy z hodiniek, ak budeš chcieť
+  }
+
+  Future<void> confirmPairing() async {
+    _pairingTimeout?.cancel();
+    await sendString("confirm");
+  }
+
+  Future<void> rejectPairing() async {
+    _pairingTimeout?.cancel();
+    await disconnect();
+  }
+
+
 }
