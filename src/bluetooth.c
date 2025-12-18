@@ -1,8 +1,11 @@
 #include "esp_log.h"
 #include "esp_err.h"
+#include "esp_random.h"
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
 #include "host/ble_hs.h"
+#include "host/ble_gap.h"
+#include "host/ble_sm.h"
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
 
@@ -12,18 +15,26 @@
 
 #include "comm_manager.h"
 #include "bsp_qmi8658.h"
+#include "ui_manager.h"
 
 static const char *TAG = "BLE_C6";
 
 // Forward declarations
 static void ble_app_on_sync(void);
 static void ble_app_advertise(void);
+static int ble_app_gap_event(struct ble_gap_event *event, void *arg);
 void ble_host_task(void *param);
 void bluetooth_send_bytes(const uint8_t *data, uint16_t len);
 
 //  Bluetooth state 
 static bool ble_enabled = false;
 static bool ble_running = false;
+static bool connected = false;
+static uint16_t conn_handle = 0;
+static int pairing_pin = 0;
+static TimerHandle_t pairing_timer = NULL;
+static bool pairing_confirmed = false;
+static struct ble_gap_event_listener gap_event_listener;
 
 //  GATT SERVICE
 static const ble_uuid128_t gatt_svc_uuid =
@@ -49,7 +60,7 @@ static uint32_t bt_test_counter = 0;
 // Periodic test message callback (every 5 seconds)
 static void bt_test_timer_callback(TimerHandle_t xTimer)
 {
-    if (!ble_enabled || bt_tx_val_handle == 0) return;
+    if (!ble_enabled || !connected || !pairing_confirmed || bt_tx_val_handle == 0) return;
     
     bt_test_counter++;
     // Generate mock heart rate data (60-100 BPM)
@@ -68,6 +79,15 @@ static void bt_test_timer_callback(TimerHandle_t xTimer)
     snprintf(json_msg, sizeof(json_msg), "{\"heartRate\":%d,\"steps\":%lu,\"spo2\":%d,\"battery\":%d}\n", mock_hr, steps, spo2, battery);
     bluetooth_send_bytes((const uint8_t *)json_msg, strlen(json_msg));
     ESP_LOGI(TAG, "TX -> Phone: %s", json_msg);
+}
+
+// Pairing timeout callback (30 seconds)
+static void pairing_timer_callback(TimerHandle_t xTimer)
+{
+    if (!connected) return;
+    ESP_LOGW(TAG, "Pairing timeout, disconnecting");
+    ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+    ui_hide_pairing();  // Assuming we add this function
 }
 
 static int ble_rx_write_cb(uint16_t conn_handle, uint16_t attr_handle,
@@ -130,7 +150,79 @@ void ble_host_task(void *param)
 static void ble_app_on_sync(void)
 {
     ble_svc_gap_device_name_set("SmartWatchC6");
+    
+    // Configure security
+    ble_hs_cfg.sm_bonding = 1;
+    ble_hs_cfg.sm_mitm = 1;
+    ble_hs_cfg.sm_sc = 1;
+    ble_hs_cfg.sm_io_cap = BLE_HS_IO_DISPLAY_ONLY;
+    ble_hs_cfg.sm_our_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
+    ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
+    
+    ble_gap_event_listener_register(&gap_event_listener, ble_app_gap_event, NULL);
     ble_app_advertise();
+}
+
+// GAP event handler
+static int ble_app_gap_event(struct ble_gap_event *event, void *arg)
+{
+    switch (event->type) {
+        case BLE_GAP_EVENT_CONNECT:
+            if (event->connect.status == 0) {
+                connected = true;
+                conn_handle = event->connect.conn_handle;
+                ESP_LOGI(TAG, "Connected to device");
+                // Pairing will be initiated automatically due to security requirements
+            } else {
+                ESP_LOGE(TAG, "Connection failed: %d", event->connect.status);
+            }
+            break;
+
+        case BLE_GAP_EVENT_DISCONNECT:
+            connected = false;
+            conn_handle = 0;
+            pairing_confirmed = false;
+            ESP_LOGI(TAG, "Disconnected");
+            ui_hide_pairing();
+            if (pairing_timer != NULL) {
+                xTimerStop(pairing_timer, 0);
+            }
+            break;
+
+        case BLE_GAP_EVENT_PASSKEY_ACTION:
+            if (event->passkey.params.action == BLE_SM_IOACT_DISP) {
+                pairing_pin = event->passkey.params.numcmp;
+                ESP_LOGI(TAG, "Display passkey: %06d", pairing_pin);
+                ui_show_pairing(pairing_pin);
+                
+                // Start pairing timer (30 seconds)
+                if (pairing_timer == NULL) {
+                    pairing_timer = xTimerCreate("pairing", pdMS_TO_TICKS(30000), pdFALSE, NULL, pairing_timer_callback);
+                }
+                if (pairing_timer != NULL) {
+                    xTimerStart(pairing_timer, 0);
+                }
+            }
+            break;
+
+        case BLE_GAP_EVENT_ENCRYPT_CHANGE:
+            if (event->encrypt_change.status == 0) {
+                ESP_LOGI(TAG, "Encryption enabled");
+                pairing_confirmed = true;
+                ui_hide_pairing();
+                if (pairing_timer != NULL) {
+                    xTimerStop(pairing_timer, 0);
+                }
+            } else {
+                ESP_LOGE(TAG, "Encryption failed: %d", event->encrypt_change.status);
+                ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+            }
+            break;
+
+        default:
+            break;
+    }
+    return 0;
 }
 
 static void ble_app_advertise(void)
@@ -216,6 +308,16 @@ void bluetooth_disable(void)
 bool bluetooth_is_enabled(void)
 {
     return ble_enabled;
+}
+
+// Confirm pairing
+void bluetooth_confirm_pairing(void)
+{
+    if (pairing_timer != NULL) {
+        xTimerStop(pairing_timer, 0);
+    }
+    pairing_confirmed = true;
+    ui_hide_pairing();
 }
 
 // Send bytes to connected centrals via GATT notification.

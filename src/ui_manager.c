@@ -62,6 +62,15 @@ void ui_show_pairing(int pin) {
     lv_scr_load_anim(pair_scr, LV_SCR_LOAD_ANIM_FADE_ON, 200, 0, false);
 }
 
+void ui_hide_pairing(void) {
+    if (pair_scr != NULL) {
+        lv_obj_del(pair_scr);
+        pair_scr = NULL;
+    }
+    // Return to menu or previous screen
+    ui_show_menu();
+}
+
 void ui_show_calculator(void) {
     load_screen(&calculator_scr, build_calculator_screen);
 }

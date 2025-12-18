@@ -16,9 +16,9 @@ lv_obj_t *build_pairing_screen(int pin)
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 15);
 
     lv_obj_t *info = lv_label_create(pair_scr);
-    lv_label_set_text(info, "Enter this code on your phone:");
+    lv_label_set_text(info, "Pairing Code:\nEnter on phone");
     lv_obj_set_style_text_color(info, lv_color_white(), 0);
-    lv_obj_align(info, LV_ALIGN_CENTER, 0, -20);
+    lv_obj_align(info, LV_ALIGN_CENTER, 0, -30);
 
     pin_label = lv_label_create(pair_scr);
     static char pin_buf[8];

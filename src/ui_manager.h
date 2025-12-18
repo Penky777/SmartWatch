@@ -12,4 +12,5 @@ void ui_show_brightness(void);
 void ui_show_reset(void);
 lv_obj_t *build_pairing_screen(int pin);
 void ui_show_pairing(int pin);
+void ui_hide_pairing(void);
 
