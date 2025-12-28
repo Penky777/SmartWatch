@@ -1,56 +1,58 @@
 // lib/services/ble/ble_client.dart
-import 'dart:async';
 import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
 
 class BleClient {
-  final _ble = FlutterReactiveBle();
+  final FlutterReactiveBle _ble;
+  BleClient(this._ble);
 
-  Stream<DiscoveredDevice> scanForDevices({required Uuid service}) {
-    return _ble.scanForDevices(withServices: [service], scanMode: ScanMode.balanced);
-  }
-
-  Future<ConnectionStateUpdate> connect(String deviceId, {Duration timeout = const Duration(seconds: 12)}) async {
-    late final StreamSubscription<ConnectionStateUpdate> sub;
-    final completer = Completer<ConnectionStateUpdate>();
-
-    sub = _ble.connectToDevice(
-      id: deviceId,
-      connectionTimeout: timeout,
-      servicesWithCharacteristicsToDiscover: {},
-    ).listen((event) {
-      if (event.connectionState == DeviceConnectionState.connected ||
-          event.connectionState == DeviceConnectionState.disconnected) {
-        completer.complete(event);
-      }
-    }, onError: (e) {
-      if (!completer.isCompleted) completer.completeError(e);
-    });
-
-    final result = await completer.future;
-    await sub.cancel();
-    return result;
+  Stream<DiscoveredDevice> scanForDevices({Uuid? service}) {
+    return _ble.scanForDevices(
+      withServices: service != null ? [service] : const [],
+      scanMode: ScanMode.lowLatency,
+    );
   }
 
   Stream<ConnectionStateUpdate> connectionStream(String deviceId) {
-    return _ble.connectToDevice(id: deviceId, connectionTimeout: const Duration(seconds: 12));
+    return _ble.connectToDevice(
+      id: deviceId,
+      connectionTimeout: const Duration(seconds: 10),
+    );
   }
 
-  Future<void> requestMtu(String deviceId, int mtu) async {
-    try { await _ble.requestMtu(deviceId: deviceId, mtu: mtu); } catch (_) {}
+  Future<int?> requestMtu(String deviceId, int mtu) async {
+    // Na niektorých platformách môže hodiť exception alebo vrátiť negotiated value.
+    return _ble.requestMtu(deviceId: deviceId, mtu: mtu);
   }
 
-  Stream<List<int>> subscribe({required String deviceId, required Uuid service, required Uuid characteristic}) {
-    final ch = QualifiedCharacteristic(serviceId: service, characteristicId: characteristic, deviceId: deviceId);
-    return _ble.subscribeToCharacteristic(ch);
+  Stream<List<int>> subscribe({
+    required String deviceId,
+    required Uuid service,
+    required Uuid characteristic,
+  }) {
+    final q = QualifiedCharacteristic(
+      deviceId: deviceId,
+      serviceId: service,
+      characteristicId: characteristic,
+    );
+    return _ble.subscribeToCharacteristic(q);
   }
 
-  Future<void> write({required String deviceId, required Uuid service, required Uuid characteristic, required List<int> value, bool withResponse = true}) {
-    final ch = QualifiedCharacteristic(serviceId: service, characteristicId: characteristic, deviceId: deviceId);
-    return _ble.writeCharacteristicWithResponse(ch, value: value);
-  }
-
-  Future<List<int>> read({required String deviceId, required Uuid service, required Uuid characteristic}) {
-    final ch = QualifiedCharacteristic(serviceId: service, characteristicId: characteristic, deviceId: deviceId);
-    return _ble.readCharacteristic(ch);
+  Future<void> write({
+    required String deviceId,
+    required Uuid service,
+    required Uuid characteristic,
+    required List<int> value,
+    bool withResponse = true,
+  }) async {
+    final q = QualifiedCharacteristic(
+      deviceId: deviceId,
+      serviceId: service,
+      characteristicId: characteristic,
+    );
+    if (withResponse) {
+      await _ble.writeCharacteristicWithResponse(q, value: value);
+    } else {
+      await _ble.writeCharacteristicWithoutResponse(q, value: value);
+    }
   }
 }
