@@ -5,7 +5,6 @@
 #include "bluetooth.h"
 #include "nvs_flash.h"
 #include "ui_manager.h"
-
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -21,21 +20,22 @@
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_vendor.h"
 #include "esp_lcd_panel_ops.h"
+#include "esp_heap_caps.h"
 #include "lvgl.h"
 #include "bsp_pcf85063.h"
 #include "bsp_qmi8658.h"
 #include "time_screen.h"
-
 #include "menu_screen.h"
 #include "settings_screen.h"
-
 #include "esp_sleep.h"
 #include "esp_pm.h"
 #include "max30102.h"
 #include "activity_screen.h"
 #include "vibration.h"
 
-// ---------------- PIN CONFIG ----------------
+// ============================================================================
+// PIN CONFIGURATION
+// ============================================================================
 #define LCD_SCLK_GPIO   1
 #define LCD_MOSI_GPIO   2
 #define LCD_DC_GPIO     3
@@ -49,7 +49,7 @@
 #define LCD_WIDTH           240
 #define LCD_HEIGHT          280
 #define LV_TICK_PERIOD_MS   2
-#define BUFFER_ROWS         40
+#define BUFFER_ROWS         20  // Reduced from 40 to save memory
 
 #define I2C_PORT            I2C_NUM_0
 #define CST816_I2C_ADDR     0x15
@@ -60,17 +60,23 @@
 #define REG_YL              0x06
 #define REG_ID_G_C          0xA7
 
-// ---------------- GLOBALS ----------------
-static const char *TAG = "APP_TOUCH_MENU";
+// Timeouts
+#define SCREEN_TIMEOUT_MS       10000
+#define HEAP_CHECK_INTERVAL_MS  2000
+#define CLOCK_UPDATE_MS         1000
+
+// ============================================================================
+// GLOBAL VARIABLES
+// ============================================================================
+static const char *TAG = "SMARTWATCH";
 static esp_lcd_panel_handle_t g_panel = NULL;
 static i2c_master_bus_handle_t g_i2c_bus = NULL;
 static i2c_master_dev_handle_t g_touch_dev = NULL;
+static i2c_master_dev_handle_t g_max_dev = NULL;
 static QueueHandle_t touch_evt_queue = NULL;
 static SemaphoreHandle_t gui_mutex = NULL;
-static i2c_master_dev_handle_t g_max_dev = NULL;
-
-
 static lv_indev_t *indev_touch = NULL;
+
 static uint32_t g_last_activity_ms = 0;
 static bool g_backlight_on = true;
 static uint8_t g_backlight_level = 100;
@@ -84,7 +90,58 @@ typedef struct {
 
 static volatile touch_sample_t s_last_touch = {false, 0, 0};
 
-// ---------------- BACKLIGHT ----------------
+// ============================================================================
+// HEAP MONITORING
+// ============================================================================
+typedef struct {
+    size_t free_heap;
+    size_t free_internal;
+    size_t largest_block;
+    size_t min_free_ever;
+} heap_stats_t;
+
+static void get_heap_stats(heap_stats_t *stats) {
+    stats->free_heap = esp_get_free_heap_size();
+    stats->free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    stats->largest_block = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+    stats->min_free_ever = esp_get_minimum_free_heap_size();
+}
+
+static void log_heap_stats(const char *context) {
+    heap_stats_t stats;
+    get_heap_stats(&stats);
+    
+    ESP_LOGI("HEAP", "[%s] Free: %u bytes | Internal: %u | Largest block: %u | Min ever: %u",
+             context,
+             (unsigned)stats.free_heap,
+             (unsigned)stats.free_internal,
+             (unsigned)stats.largest_block,
+             (unsigned)stats.min_free_ever);
+    
+    // Warn if fragmentation is severe
+    if (stats.largest_block < stats.free_internal / 2) {
+        ESP_LOGW("HEAP", "Fragmentation detected! Largest block only %u of %u free",
+                 (unsigned)stats.largest_block, (unsigned)stats.free_internal);
+    }
+    
+    // Critical warning
+    if (stats.free_internal < 30000) {
+        ESP_LOGE("HEAP", "CRITICAL: Only %u bytes internal RAM remaining!",
+                 (unsigned)stats.free_internal);
+    }
+}
+
+static bool check_heap_integrity(const char *context) {
+    bool ok = heap_caps_check_integrity_all(true);
+    if (!ok) {
+        ESP_LOGE("HEAP", "CORRUPTION DETECTED at %s!", context);
+    }
+    return ok;
+}
+
+// ============================================================================
+// BACKLIGHT CONTROL
+// ============================================================================
 static void backlight_init(void) {
     ledc_timer_config_t timer = {
         .speed_mode = LEDC_LOW_SPEED_MODE,
@@ -108,16 +165,36 @@ static void backlight_init(void) {
 
 void backlight_set(uint8_t percent) {
     if (percent > 100) percent = 100;
-    ESP_ERROR_CHECK(ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, (1023 * percent) / 100));
+    uint32_t duty = (1023 * percent) / 100;
+    ESP_ERROR_CHECK(ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty));
     ESP_ERROR_CHECK(ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0));
 }
 
-// ---------------- LIGHT SLEEP ----------------
+// ============================================================================
+// GUI LOCK
+// ============================================================================
+void gui_lock(void) {
+    if (gui_mutex) {
+        xSemaphoreTake(gui_mutex, portMAX_DELAY);
+    }
+}
+
+void gui_unlock(void) {
+    if (gui_mutex) {
+        xSemaphoreGive(gui_mutex);
+    }
+}
+
+// ============================================================================
+// LIGHT SLEEP
+// ============================================================================
 static void enter_light_sleep(void) {
-    ESP_LOGI(TAG, "Preparing to enter light sleep...");
+    ESP_LOGI(TAG, "Entering light sleep...");
+    
     backlight_set(0);
     g_backlight_on = false;
 
+    // Configure wake on touch interrupt
     gpio_config_t io_conf = {
         .pin_bit_mask = 1ULL << TP_INT_GPIO,
         .mode = GPIO_MODE_INPUT,
@@ -129,18 +206,28 @@ static void enter_light_sleep(void) {
     ESP_ERROR_CHECK(esp_sleep_enable_ext1_wakeup(1ULL << TP_INT_GPIO, ESP_EXT1_WAKEUP_ANY_HIGH));
 
     vTaskDelay(pdMS_TO_TICKS(50));
-    ESP_LOGI(TAG, "Entering light sleep...");
     esp_light_sleep_start();
-    ESP_LOGI(TAG, "Woke up from light sleep!");
+    
+    ESP_LOGI(TAG, "Woke from light sleep");
+    backlight_set(g_backlight_level);
+    g_backlight_on = true;
+    g_last_activity_ms = lv_tick_get();
 }
 
-// ---------------- LVGL FLUSH ----------------
+// ============================================================================
+// LVGL CALLBACKS
+// ============================================================================
 static void lvgl_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
     int x1 = area->x1;
     int y1 = area->y1;
     int x2e = area->x2 + 1;
     int y2e = area->y2 + 1;
-    ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(g_panel, x1, y1, x2e, y2e, px_map));
+    
+    esp_err_t ret = esp_lcd_panel_draw_bitmap(g_panel, x1, y1, x2e, y2e, px_map);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "LCD draw failed: %s", esp_err_to_name(ret));
+    }
+    
     lv_display_flush_ready(disp);
 }
 
@@ -149,11 +236,26 @@ static void lvgl_tick_cb(void *arg) {
     lv_tick_inc(LV_TICK_PERIOD_MS);
 }
 
-// ---------------- GUI LOCK ----------------
-void gui_lock(void) { if (gui_mutex) xSemaphoreTake(gui_mutex, portMAX_DELAY); }
-void gui_unlock(void) { if (gui_mutex) xSemaphoreGive(gui_mutex); }
+static void lvgl_touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
+    (void)indev;
+    
+    data->state = s_last_touch.pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+    data->point.x = s_last_touch.x;
+    data->point.y = s_last_touch.y;
+    data->continue_reading = false;
 
-// ---------------- I2C & TOUCH ----------------
+    if (data->state == LV_INDEV_STATE_PRESSED) {
+        g_last_activity_ms = lv_tick_get();
+        if (!g_backlight_on) {
+            backlight_set(g_backlight_level);
+            g_backlight_on = true;
+        }
+    }
+}
+
+// ============================================================================
+// I2C & TOUCH INITIALIZATION
+// ============================================================================
 static esp_err_t i2c_bus_init(void) {
     i2c_master_bus_config_t cfg = {
         .i2c_port = I2C_PORT,
@@ -179,61 +281,75 @@ static esp_err_t cst816_probe_id(uint8_t *out_id) {
     return i2c_master_transmit_receive(g_touch_dev, &reg, 1, out_id, 1, 50);
 }
 
-// ---------------- INTERRUPTS & TOUCH ----------------
-static void IRAM_ATTR touch_isr(void *arg) {
-    (void)arg;
-    s_touch_irq_flag = true;
-    BaseType_t xHigher = pdFALSE;
-    uint8_t sig = 1;
-    if (touch_evt_queue) xQueueSendFromISR(touch_evt_queue, &sig, &xHigher);
-    if (xHigher) portYIELD_FROM_ISR();
-}
-
 static esp_err_t cst816_read_sample(touch_sample_t *out) {
-    uint8_t buf[6] = {0}, start = REG_GESTURE;
+    uint8_t buf[6] = {0};
+    uint8_t start = REG_GESTURE;
+    
     esp_err_t err = i2c_master_transmit_receive(g_touch_dev, &start, 1, buf, sizeof(buf), 50);
-    if (err != ESP_OK) return err;
+    if (err != ESP_OK) {
+        return err;
+    }
+    
     out->pressed = (buf[1] & 0x0F) > 0;
     uint16_t x = ((buf[2] & 0x0F) << 8) | buf[3];
     uint16_t y = ((buf[4] & 0x0F) << 8) | buf[5];
+    
     if (x >= LCD_WIDTH) x = LCD_WIDTH - 1;
     if (y >= LCD_HEIGHT) y = LCD_HEIGHT - 1;
+    
     out->x = (int16_t)x;
     out->y = (int16_t)y;
+    
     return ESP_OK;
 }
 
-static void lvgl_touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
-    (void)indev;
-    data->state = s_last_touch.pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
-    data->point.x = s_last_touch.x;
-    data->point.y = s_last_touch.y;
-    data->continue_reading = false;
-
-    if (data->state == LV_INDEV_STATE_PRESSED) {
-        g_last_activity_ms = lv_tick_get();
-        if (!g_backlight_on) { backlight_set(g_backlight_level); g_backlight_on = true; }
+// ============================================================================
+// TOUCH INTERRUPT
+// ============================================================================
+static void IRAM_ATTR touch_isr(void *arg) {
+    (void)arg;
+    s_touch_irq_flag = true;
+    
+    BaseType_t xHigher = pdFALSE;
+    uint8_t sig = 1;
+    if (touch_evt_queue) {
+        xQueueSendFromISR(touch_evt_queue, &sig, &xHigher);
+    }
+    if (xHigher) {
+        portYIELD_FROM_ISR();
     }
 }
 
-// ---------------- FREERTOS TASKS ----------------
+// ============================================================================
+// FREERTOS TASKS
+// ============================================================================
 static void clock_task(void *arg) {
     (void)arg;
+    
+    ESP_LOGI(TAG, "Clock task started");
+    
     while (1) {
         struct tm now;
         if (bsp_pcf85063_get_time(&now)) {
             char buf[16];
-            snprintf(buf, sizeof(buf), "%02d:%02d:%02d", now.tm_hour, now.tm_min, now.tm_sec);
+            snprintf(buf, sizeof(buf), "%02d:%02d:%02d", 
+                     now.tm_hour, now.tm_min, now.tm_sec);
+            
             gui_lock();
             time_screen_update(buf);
             gui_unlock();
         }
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        
+        vTaskDelay(pdMS_TO_TICKS(CLOCK_UPDATE_MS));
     }
 }
 
 static void touch_task(void *arg) {
     (void)arg;
+    
+    ESP_LOGI(TAG, "Touch task started");
+    
+    // Configure touch interrupt GPIO
     gpio_config_t cfg = {
         .pin_bit_mask = 1ULL << TP_INT_GPIO,
         .mode = GPIO_MODE_INPUT,
@@ -245,58 +361,77 @@ static void touch_task(void *arg) {
     ESP_ERROR_CHECK(gpio_install_isr_service(0));
     ESP_ERROR_CHECK(gpio_isr_handler_add(TP_INT_GPIO, touch_isr, NULL));
 
+    // Clear any pending touch event
     touch_sample_t samp = {0};
-    (void)cst816_read_sample(&samp);
+    cst816_read_sample(&samp);
     
     static uint32_t touch_count = 0;
 
     while (1) {
         uint8_t sig;
-        (void)xQueueReceive(touch_evt_queue, &sig, pdMS_TO_TICKS(20));
+        xQueueReceive(touch_evt_queue, &sig, pdMS_TO_TICKS(20));
+        
         if (s_touch_irq_flag || s_last_touch.pressed) {
-            uint32_t touch_start = esp_timer_get_time();
-            if(cst816_read_sample(&samp) == ESP_OK)
+            if (cst816_read_sample(&samp) == ESP_OK) {
                 s_last_touch = samp;
-            uint32_t touch_time = esp_timer_get_time() - touch_start;
-            
-            // Log touch events
-            touch_count++;
-            if (samp.pressed) {
-                ESP_LOGI("TOUCH", "Event #%lu | X:%d Y:%d | Latency: %lu us | Heap: %lu bytes", 
-                         touch_count, samp.x, samp.y, touch_time, esp_get_free_heap_size());
+                
+                if (samp.pressed) {
+                    touch_count++;
+                    ESP_LOGD("TOUCH", "Event #%lu | X:%d Y:%d", 
+                             touch_count, samp.x, samp.y);
+                }
             }
-            
             s_touch_irq_flag = false;
         }
     }
 }
 
-// ---------------- MAIN ----------------
-void app_main(void) {
-    // Early debug prints so serial monitor shows boot messages immediately
-    // Use printf (UART driver may not be installed yet).
-    printf("BOOT\n");
-    fflush(stdout);
-    ESP_LOGI(TAG, "App start - booting");
-
-    esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
-    switch (cause) {
-        case ESP_SLEEP_WAKEUP_EXT0: ESP_LOGI(TAG, "Woke up from touch interrupt (EXT0)"); break;
-        case ESP_SLEEP_WAKEUP_EXT1: ESP_LOGI(TAG, "Woke up from EXT1 (multiple GPIOs)"); break;
-        default: ESP_LOGI(TAG, "Normal power-on reset"); break;
+static void monitor_task(void *arg) {
+    (void)arg;
+    
+    ESP_LOGI(TAG, "Monitor task started");
+    
+    uint32_t last_check = 0;
+    
+    while (1) {
+        uint32_t now = lv_tick_get();
+        
+        // Log heap stats periodically
+        if (now - last_check >= HEAP_CHECK_INTERVAL_MS) {
+            log_heap_stats("periodic");
+            check_heap_integrity("periodic");
+            last_check = now;
+        }
+        
+        // Check for screen timeout
+        if (g_backlight_on && now - g_last_activity_ms > SCREEN_TIMEOUT_MS) {
+            ESP_LOGI(TAG, "Screen timeout - turning off backlight");
+            backlight_set(0);
+            g_backlight_on = false;
+        }
+        
+        vTaskDelay(pdMS_TO_TICKS(500));
     }
+}
 
-    // --- SPI & LCD ---
+// ============================================================================
+// LCD INITIALIZATION
+// ============================================================================
+static esp_err_t lcd_init(void) {
+    ESP_LOGI(TAG, "Initializing LCD...");
+    
+    // SPI bus configuration
     spi_bus_config_t buscfg = {
         .sclk_io_num = LCD_SCLK_GPIO,
         .mosi_io_num = LCD_MOSI_GPIO,
         .miso_io_num = -1,
         .quadwp_io_num = -1,
         .quadhd_io_num = -1,
-        .max_transfer_sz = LCD_WIDTH * BUFFER_ROWS * 2
+        .max_transfer_sz = LCD_WIDTH * BUFFER_ROWS * sizeof(lv_color_t)
     };
     ESP_ERROR_CHECK(spi_bus_initialize(SPI2_HOST, &buscfg, SPI_DMA_CH_AUTO));
 
+    // LCD panel IO
     esp_lcd_panel_io_handle_t io = NULL;
     esp_lcd_panel_io_spi_config_t iocfg = {
         .dc_gpio_num = LCD_DC_GPIO,
@@ -309,6 +444,7 @@ void app_main(void) {
     };
     ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)SPI2_HOST, &iocfg, &io));
 
+    // LCD panel
     esp_lcd_panel_dev_config_t pcfg = {
         .reset_gpio_num = LCD_RST_GPIO,
         .color_space = ESP_LCD_COLOR_SPACE_RGB,
@@ -320,51 +456,56 @@ void app_main(void) {
     ESP_ERROR_CHECK(esp_lcd_panel_invert_color(g_panel, true));
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(g_panel, true));
     esp_lcd_panel_set_gap(g_panel, 0, 20);
+    
+    ESP_LOGI(TAG, "LCD initialized successfully");
+    return ESP_OK;
+}
 
-    // --- Backlight ---
-    backlight_init();
-    backlight_set(100);
-
-    // --- I2C & Touch ---
-    ESP_ERROR_CHECK(i2c_bus_init());
-    bsp_pcf85063_init(g_i2c_bus);
-    // Initialize and start QMI8658 (gyro/accel) self-test printing task
-    bsp_qmi8658_init(g_i2c_bus);
-    bsp_qmi8658_start_step_detection();
-    bsp_qmi8658_test();
-    ESP_LOGI(TAG, "ACCEL_TEST_STARTED");
-
-    ESP_ERROR_CHECK(cst816_add_device());
-    uint8_t id = 0;
-    if (cst816_probe_id(&id) == ESP_OK)
-        ESP_LOGI(TAG, "CST816 ID=0x%02X", id);
-    ESP_LOGI(TAG, "TOUCH_INIT_DONE");
-
-    // --- LVGL Init ---
-    ESP_LOGI(TAG, "LVGL_INIT_START");
+// ============================================================================
+// LVGL INITIALIZATION
+// ============================================================================
+static esp_err_t lvgl_init(void) {
+    ESP_LOGI(TAG, "Initializing LVGL...");
+    log_heap_stats("before LVGL init");
+    
     lv_init();
-    ESP_LOGI(TAG, "LVGL_INIT_DONE");
-    g_last_activity_ms = lv_tick_get();
-    gui_mutex = xSemaphoreCreateMutex();
-
-    // ----- DYNAMIC DMA-CAPABLE BUFFERS -----
+    
+    // Allocate DMA-capable buffers
     size_t buf_size = LCD_WIDTH * BUFFER_ROWS * sizeof(lv_color_t);
+    ESP_LOGI(TAG, "Allocating 2 × %u bytes for LVGL buffers", (unsigned)buf_size);
+    
     lv_color_t *buf1 = heap_caps_malloc(buf_size, MALLOC_CAP_DMA);
     lv_color_t *buf2 = heap_caps_malloc(buf_size, MALLOC_CAP_DMA);
+    
     if (!buf1 || !buf2) {
-        ESP_LOGE(TAG, "Failed to allocate LVGL buffers");
-        return;
+        ESP_LOGE(TAG, "Failed to allocate LVGL buffers!");
+        log_heap_stats("LVGL buffer alloc FAILED");
+        if (buf1) free(buf1);
+        if (buf2) free(buf2);
+        return ESP_ERR_NO_MEM;
     }
-    ESP_LOGI(TAG, "LVGL_BUFFERS_ALLOCATED");
+    
+    ESP_LOGI(TAG, "LVGL buffers allocated successfully");
+    log_heap_stats("after LVGL buffer alloc");
 
+    // Create display
     lv_display_t *disp = lv_display_create(LCD_WIDTH, LCD_HEIGHT);
+    if (!disp) {
+        ESP_LOGE(TAG, "Failed to create LVGL display");
+        free(buf1);
+        free(buf2);
+        return ESP_FAIL;
+    }
+    
     lv_display_set_flush_cb(disp, lvgl_flush_cb);
     lv_display_set_buffers(disp, buf1, buf2, buf_size, LV_DISPLAY_RENDER_MODE_PARTIAL);
     
+    // Create touch input device
     indev_touch = lv_indev_create();
     lv_indev_set_type(indev_touch, LV_INDEV_TYPE_POINTER);
     lv_indev_set_read_cb(indev_touch, lvgl_touch_read_cb);
 
+    // Start LVGL tick timer
     const esp_timer_create_args_t tick_args = {
         .callback = &lvgl_tick_cb,
         .arg = NULL,
@@ -374,65 +515,161 @@ void app_main(void) {
     esp_timer_handle_t tick_timer;
     ESP_ERROR_CHECK(esp_timer_create(&tick_args, &tick_timer));
     ESP_ERROR_CHECK(esp_timer_start_periodic(tick_timer, LV_TICK_PERIOD_MS * 1000));
+    
+    ESP_LOGI(TAG, "LVGL initialized successfully");
+    log_heap_stats("after LVGL init");
+    
+    return ESP_OK;
+}
 
-    ui_manager_init();
-    ESP_LOGI(TAG, "UI_MANAGER_INIT_DONE");
-    gui_lock(); ui_show_menu(); gui_unlock();
-    //max_set_ui_update_callback(activity_screen_update);
-    // max_init(g_i2c_bus);
-    vibe_init();
-    vibe_pulse();
-
-
-    // --- NVS ---
+// ============================================================================
+// MAIN APPLICATION
+// ============================================================================
+void app_main(void) {
+    printf("\n\n========================================\n");
+    printf("SMARTWATCH FIRMWARE STARTING\n");
+    printf("========================================\n\n");
+    
+    // Check wakeup cause
+    esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+    switch (cause) {
+        case ESP_SLEEP_WAKEUP_EXT0:
+            ESP_LOGI(TAG, "Woke from EXT0 (touch)");
+            break;
+        case ESP_SLEEP_WAKEUP_EXT1:
+            ESP_LOGI(TAG, "Woke from EXT1");
+            break;
+        default:
+            ESP_LOGI(TAG, "Power-on or reset");
+            break;
+    }
+    
+    log_heap_stats("boot");
+    
+    // Initialize NVS
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_LOGW(TAG, "NVS partition erased, reinitializing...");
         ESP_ERROR_CHECK(nvs_flash_erase());
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
-
-    // --- Bluetooth ---
-    ESP_LOGI(TAG, "BLE_INIT_START");
+    ESP_LOGI(TAG, "NVS initialized");
+    
+    // Initialize LCD
+    ESP_ERROR_CHECK(lcd_init());
+    
+    // Initialize backlight
+    backlight_init();
+    backlight_set(100);
+    
+    // Initialize I2C bus
+    ESP_LOGI(TAG, "Initializing I2C bus...");
+    ESP_ERROR_CHECK(i2c_bus_init());
+    
+    // Initialize RTC
+    ESP_LOGI(TAG, "Initializing RTC...");
+    bsp_pcf85063_init(g_i2c_bus);
+    
+    // Initialize IMU
+    ESP_LOGI(TAG, "Initializing IMU...");
+    bsp_qmi8658_init(g_i2c_bus);
+    bsp_qmi8658_start_step_detection();
+    bsp_qmi8658_test();
+    
+    // Initialize touch controller
+    ESP_LOGI(TAG, "Initializing touch controller...");
+    ESP_ERROR_CHECK(cst816_add_device());
+    uint8_t touch_id = 0;
+    if (cst816_probe_id(&touch_id) == ESP_OK) {
+        ESP_LOGI(TAG, "CST816 detected, ID=0x%02X", touch_id);
+    } else {
+        ESP_LOGW(TAG, "CST816 probe failed");
+    }
+    
+    log_heap_stats("after hardware init");
+    
+    // Initialize LVGL
+    ESP_ERROR_CHECK(lvgl_init());
+    
+    // Create GUI mutex
+    gui_mutex = xSemaphoreCreateMutex();
+    if (!gui_mutex) {
+        ESP_LOGE(TAG, "Failed to create GUI mutex");
+        return;
+    }
+    
+    g_last_activity_ms = lv_tick_get();
+    
+    // Initialize UI manager
+    ESP_LOGI(TAG, "Initializing UI manager...");
+    log_heap_stats("before UI manager init");
+    
+    gui_lock();
+    ui_manager_init();
+    ui_show_menu();
+    gui_unlock();
+    
+    log_heap_stats("after UI manager init");
+    check_heap_integrity("after UI init");
+    
+    // Initialize vibration motor
+    vibe_init();
+    vibe_pulse();
+    
+    // Initialize Bluetooth
+    ESP_LOGI(TAG, "Initializing Bluetooth...");
+    log_heap_stats("before BLE init");
     bluetooth_init();
     bluetooth_enable();
-    ESP_LOGI(TAG, "BLE_INIT_DONE");
-
-    // --- FreeRTOS tasks ---
+    log_heap_stats("after BLE init");
+    
+    // Create FreeRTOS tasks
     touch_evt_queue = xQueueCreate(8, 1);
-    xTaskCreate(touch_task, "touch_task", 6144, NULL, 6, NULL);
-    xTaskCreate(clock_task, "clock_task", 6144, NULL, 5, NULL);
-
-    // --- Main loop ---
-    static uint32_t last_perf_log = 0;
-    while (1) {
-        uint32_t loop_start = esp_timer_get_time();
-        
-        gui_lock();
-        lv_timer_handler();
-        bluetooth_poll(); // Check for BLE UI updates
-        gui_unlock();
-        
-        uint32_t loop_end = esp_timer_get_time();
-        uint32_t loop_time_us = loop_end - loop_start;
-        
-        uint32_t now = lv_tick_get();
-
-        if (g_backlight_on && now - g_last_activity_ms > 10000) {
-            backlight_set(0);
-            g_backlight_on = false;
-        }
-
-        // Log performance metrics every 2 seconds
-        if (now - last_perf_log > 2000) {
-            uint32_t free_heap = esp_get_free_heap_size();
-            ESP_LOGI("PERF", "Loop: %lu us | Heap: %lu bytes | Free: %lu%%", 
-                     loop_time_us, 
-                     free_heap,
-                     (free_heap * 100) / 327680);
-            last_perf_log = now;
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(10));
+    if (!touch_evt_queue) {
+        ESP_LOGE(TAG, "Failed to create touch queue");
+        return;
     }
+    
+    ESP_LOGI(TAG, "Creating tasks...");
+    xTaskCreate(touch_task, "touch", 8192, NULL, 6, NULL);
+    xTaskCreate(clock_task, "clock", 8192, NULL, 5, NULL);
+    xTaskCreate(monitor_task, "monitor", 4096, NULL, 4, NULL);
+    
+    log_heap_stats("after task creation");
+    
+    ESP_LOGI(TAG, "========================================");
+    ESP_LOGI(TAG, "INITIALIZATION COMPLETE");
+    ESP_LOGI(TAG, "========================================\n");
+    
+    // NEW CODE:
+static uint32_t last_perf_log = 0;
+
+// Force LVGL to render
+vTaskDelay(pdMS_TO_TICKS(50));
+while (1) {
+    
+    uint32_t timeout = lv_timer_handler();  // Returns ms until next timer
+    bluetooth_poll();
+    gui_unlock();
+    
+    uint32_t now = lv_tick_get();
+
+    // Screen timeout check
+    if (g_backlight_on && now - g_last_activity_ms > 10000) {
+        backlight_set(0);
+        g_backlight_on = false;
+    }
+
+    // Periodic logging
+    if (now - last_perf_log > 2000) {
+        ESP_LOGI("PERF", "Heap: %u bytes", (unsigned)esp_get_free_heap_size());
+        last_perf_log = now;
+    }
+
+    // Smart delay based on LVGL timers
+    uint32_t delay_ms = (timeout > 0 && timeout < 20) ? timeout : 5;
+    vTaskDelay(pdMS_TO_TICKS(delay_ms));
+    }
+
 }

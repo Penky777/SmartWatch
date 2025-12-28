@@ -1,114 +1,162 @@
 #include "ui_manager.h"
-#include "calculator_screen.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "lvgl.h"
 
 static const char *TAG = "UI_MANAGER";
 
-// Forward declarations of your builders
+// Forward declarations
 lv_obj_t *build_menu_screen(void);
 lv_obj_t *build_calendar_screen(void);
 lv_obj_t *build_activity_screen(void);
 lv_obj_t *build_settings_screen(void);
 lv_obj_t *build_calculator_screen(void);
 lv_obj_t *build_reset_screen(void);
+lv_obj_t *build_brightness_screen(void);
+lv_obj_t *build_time_screen(void);
+lv_obj_t *build_pairing_screen(int pin);
 
-// No more static screen caching - LVGL manages screen lifecycle
-// pair_scr only kept for pairing flow control
-static lv_obj_t *pair_scr = NULL;
-static bool pairing_hidden = false;
+// Cache screens - created once, reused forever
+static lv_obj_t *screen_menu = NULL;
+static lv_obj_t *screen_calendar = NULL;
+static lv_obj_t *screen_activity = NULL;
+static lv_obj_t *screen_settings = NULL;
+static lv_obj_t *screen_calculator = NULL;
+static lv_obj_t *screen_brightness = NULL;
+static lv_obj_t *screen_reset = NULL;
+static lv_obj_t *screen_time = NULL;
+static lv_obj_t *screen_pairing = NULL;
+static lv_obj_t *current_screen = NULL;
 
-// Forward declaration of helper functions
-static void load_screen(lv_obj_t **slot, lv_obj_t *(*builder)(void));
-static void delete_screen_timer_cb(lv_timer_t *timer);
+static void log_heap(const char *ctx) {
+    ESP_LOGI(TAG, "[%s] Heap: %u | Largest: %u", ctx,
+        (unsigned)esp_get_free_heap_size(),
+        (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+}
 
 void ui_manager_init(void) {
-    pair_scr = NULL;
-}
-
-static void load_screen(lv_obj_t **slot, lv_obj_t *(*builder)(void)) {
-    ESP_LOGI(TAG, "load_screen called");
+    ESP_LOGI(TAG, "Init UI Manager");
+    log_heap("before");
     
-    // Always create a fresh screen
-    lv_obj_t *new_screen = builder();
-    ESP_LOGI(TAG, "Created new screen: %p", new_screen);
+    // Initialize all cache pointers to NULL
+    screen_menu = NULL;
+    screen_calendar = NULL;
+    screen_activity = NULL;
+    screen_settings = NULL;
+    screen_calculator = NULL;
+    screen_brightness = NULL;
+    screen_reset = NULL;
+    screen_time = NULL;
+    screen_pairing = NULL;
+    current_screen = NULL;
     
-    // Load WITHOUT auto-delete, DON'T cache the pointer
-    // LVGL will keep the new screen as active, and we'll delete old one later if needed
-    lv_scr_load_anim(new_screen, LV_SCR_LOAD_ANIM_FADE_ON, 200, 0, false);
+    log_heap("after");
+    ESP_LOGI(TAG, "UI Manager ready (screens will be created on-demand)");
+}
+
+static void switch_screen(lv_obj_t **cache, lv_obj_t *(*builder)(void), const char *name) {
+    ESP_LOGI(TAG, "Switch to %s", name);
+    log_heap("before switch");
     
-    ESP_LOGI(TAG, "Screen loaded: %p", new_screen);
-}
-
-static void delete_screen_timer_cb(lv_timer_t *timer) {
-    lv_obj_t *scr = (lv_obj_t*)lv_timer_get_user_data(timer);
-    if (scr) {
-        lv_obj_del(scr);
-    }
-}
-
-extern lv_obj_t *build_brightness_screen(void);
-
-void ui_show_brightness(void) {
-    // Dummy pointer for load_screen - we don't cache screens anymore
-    static lv_obj_t *dummy = NULL;
-    load_screen(&dummy, build_brightness_screen);
-}
-
-void ui_show_pairing(int pin) {
-    pair_scr = build_pairing_screen(pin);
-    lv_scr_load_anim(pair_scr, LV_SCR_LOAD_ANIM_FADE_ON, 200, 0, false);
-    pairing_hidden = false; // Reset flag when showing pairing
-}
-
-void ui_hide_pairing(void) {
-    if (pairing_hidden) {
-        ESP_LOGI(TAG, "Pairing already hidden, returning");
-        return; // Already hidden
+    // Create if not cached
+    if (!(*cache)) {
+        ESP_LOGI(TAG, "Creating %s screen...", name);
+        *cache = builder();
+        
+        if (!(*cache)) {
+            ESP_LOGE(TAG, "Failed to create %s screen!", name);
+            return;
+        }
+        
+        ESP_LOGI(TAG, "Created %s screen: %p", name, *cache);
     }
     
-    ESP_LOGI(TAG, "Hiding pairing screen");
+    // Skip if already showing
+    if (current_screen == *cache) {
+        ESP_LOGI(TAG, "%s already active", name);
+        return;
+    }
     
-    // Just load the menu screen, old pairing screen will be cleaned up later
-    ui_show_menu();
-    pairing_hidden = true;
-}
-
-void ui_show_calculator(void) {
-    // Dummy pointer for load_screen - we don't cache screens anymore
-    static lv_obj_t *dummy = NULL;
-    load_screen(&dummy, build_calculator_screen);
-}
-
-void ui_show_reset(void) {
-    // Dummy pointer for load_screen - we don't cache screens anymore
-    static lv_obj_t *dummy = NULL;
-    load_screen(&dummy, build_reset_screen);
+    // First screen load - no animation
+    if (current_screen == NULL) {
+        ESP_LOGI(TAG, "First screen load - no animation");
+        lv_scr_load(*cache);
+        current_screen = *cache;
+    } else {
+        // Subsequent loads - with animation
+        // ✅ CHANGED: false means DON'T auto-delete old screen (we manage them)
+        ESP_LOGI(TAG, "Loading with animation (keeping old screen cached)");
+        lv_scr_load_anim(*cache, LV_SCR_LOAD_ANIM_FADE_IN, 150, 0, false);
+        current_screen = *cache;
+    }
+    
+    log_heap("after switch");
+    vTaskDelay(1);
 }
 
 void ui_show_menu(void) {
-    // Dummy pointer for load_screen - we don't cache screens anymore
-    static lv_obj_t *dummy = NULL;
-    load_screen(&dummy, build_menu_screen);
+    switch_screen(&screen_menu, build_menu_screen, "MENU");
 }
+
 void ui_show_calendar(void) {
-    // Dummy pointer for load_screen - we don't cache screens anymore
-    static lv_obj_t *dummy = NULL;
-    load_screen(&dummy, build_calendar_screen);
+    switch_screen(&screen_calendar, build_calendar_screen, "CALENDAR");
 }
 
 void ui_show_activity(void) {
-    // Dummy pointer for load_screen - we don't cache screens anymore
-    static lv_obj_t *dummy = NULL;
-    load_screen(&dummy, build_activity_screen);
+    switch_screen(&screen_activity, build_activity_screen, "ACTIVITY");
 }
 
 void ui_show_settings(void) {
-    // Dummy pointer for load_screen - we don't cache screens anymore
-    static lv_obj_t *dummy = NULL;
-    load_screen(&dummy, build_settings_screen);
+    switch_screen(&screen_settings, build_settings_screen, "SETTINGS");
 }
 
+void ui_show_calculator(void) {
+    switch_screen(&screen_calculator, build_calculator_screen, "CALCULATOR");
+}
+
+void ui_show_brightness(void) {
+    switch_screen(&screen_brightness, build_brightness_screen, "BRIGHTNESS");
+}
+
+void ui_show_reset(void) {
+    switch_screen(&screen_reset, build_reset_screen, "RESET");
+}
+
+void ui_show_time(void) {
+    switch_screen(&screen_time, build_time_screen, "TIME");
+}
+
+void ui_show_pairing(int pin) {
+    ESP_LOGI(TAG, "Show pairing (PIN: %d)", pin);
+    
+    // Always recreate pairing screen (PIN changes each time)
+    if (screen_pairing) {
+        lv_obj_del(screen_pairing);
+    }
+    
+    screen_pairing = build_pairing_screen(pin);
+    
+    if (current_screen == NULL) {
+        lv_scr_load(screen_pairing);
+    } else {
+        // ✅ CHANGED: false here too
+        lv_scr_load_anim(screen_pairing, LV_SCR_LOAD_ANIM_FADE_IN, 150, 0, false);
+    }
+    
+    current_screen = screen_pairing;
+    vTaskDelay(1);
+}
+
+void ui_hide_pairing(void) {
+    ESP_LOGI(TAG, "Hide pairing");
+    
+    if (screen_pairing) {
+        lv_obj_del(screen_pairing);
+        screen_pairing = NULL;
+    }
+    
+    ui_show_menu();
+}
