@@ -11,3 +11,9 @@ bool bluetooth_is_enabled(void);
 // Send bytes to connected central(s) via notification. Data length limited
 // by MTU (we cap to 240 bytes here).
 void bluetooth_send_bytes(const uint8_t *data, uint16_t len);
+
+// Confirm pairing (called from comm_manager)
+void bluetooth_confirm_pairing(void);
+
+// Poll for UI updates (call from LVGL task)
+void bluetooth_poll(void);

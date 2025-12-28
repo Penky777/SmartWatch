@@ -6,6 +6,8 @@
 #include "host/ble_hs.h"
 #include "host/ble_gap.h"
 #include "host/ble_sm.h"
+#include "host/ble_gatt.h"
+#include "host/ble_l2cap.h"
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
 
@@ -16,6 +18,7 @@
 #include "comm_manager.h"
 #include "bsp_qmi8658.h"
 #include "ui_manager.h"
+#include "gui.h"
 
 static const char *TAG = "BLE_C6";
 
@@ -25,15 +28,19 @@ static void ble_app_advertise(void);
 static int ble_app_gap_event(struct ble_gap_event *event, void *arg);
 void ble_host_task(void *param);
 void bluetooth_send_bytes(const uint8_t *data, uint16_t len);
+static void send_pin_now(void);
 
 //  Bluetooth state 
 static bool ble_enabled = false;
 static bool ble_running = false;
 static bool connected = false;
-static uint16_t conn_handle = 0;
+static uint16_t conn_handle = BLE_HS_CONN_HANDLE_NONE;
 static int pairing_pin = 0;
 static TimerHandle_t pairing_timer = NULL;
+static TimerHandle_t pairing_timeout_timer = NULL;
 static bool pairing_confirmed = false;
+static bool mtu_negotiated = false;
+static volatile bool pairing_hide_requested = false;
 static struct ble_gap_event_listener gap_event_listener;
 
 //  GATT SERVICE
@@ -75,19 +82,57 @@ static void bt_test_timer_callback(TimerHandle_t xTimer)
     // Demo battery (90% for now)
     int battery = 90;
     
-    char json_msg[256];
+    char json_msg[128];
     snprintf(json_msg, sizeof(json_msg), "{\"heartRate\":%d,\"steps\":%lu,\"spo2\":%d,\"battery\":%d}\n", mock_hr, steps, spo2, battery);
     bluetooth_send_bytes((const uint8_t *)json_msg, strlen(json_msg));
     ESP_LOGI(TAG, "TX -> Phone: %s", json_msg);
 }
 
-// Pairing timeout callback (30 seconds)
 static void pairing_timer_callback(TimerHandle_t xTimer)
 {
-    if (!connected) return;
+    ESP_LOGW(TAG, "Pairing timeout - conn_handle: %d, connected: %d", conn_handle, connected);
+    
+    // Check for valid connection state
+    if (conn_handle == BLE_HS_CONN_HANDLE_NONE) {
+        ESP_LOGW(TAG, "Pairing timeout but conn_handle is NONE, just clean up");
+        gui_lock();
+        ui_hide_pairing();
+        gui_unlock();
+        return;
+    }
+    
+    if (!connected) {
+        ESP_LOGW(TAG, "Pairing timeout but not connected, just hide pairing screen");
+        gui_lock();
+        ui_hide_pairing();
+        gui_unlock();
+        return;
+    }
+    
     ESP_LOGW(TAG, "Pairing timeout, disconnecting");
     ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
-    ui_hide_pairing();  // Assuming we add this function
+    gui_lock();
+    ui_hide_pairing();
+    gui_unlock();
+}
+
+// Send PIN callback (2 seconds after connection)
+static void send_pin_callback(TimerHandle_t xTimer)
+{
+    if (!connected) return;
+    
+    // Send PIN regardless of MTU - phone app should handle truncation if needed
+    send_pin_now();
+}
+
+// Send PIN immediately (called when MTU is ready or after timeout)
+static void send_pin_now(void)
+{
+    // Use short format that works with default MTU
+    char pin_msg[16];
+    snprintf(pin_msg, sizeof(pin_msg), "{\"pin\":%d}", pairing_pin);
+    bluetooth_send_bytes((const uint8_t *)pin_msg, strlen(pin_msg));
+    ESP_LOGI(TAG, "Sent PIN message: %s", pin_msg);
 }
 
 static int ble_rx_write_cb(uint16_t conn_handle, uint16_t attr_handle,
@@ -124,13 +169,13 @@ static const struct ble_gatt_svc_def gatt_svcs[] = {
                 /* RX: phone -> watch (write) */
                 .uuid = &gatt_chr_rx_uuid.u,
                 .access_cb = ble_rx_write_cb,
-                .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP | BLE_GATT_CHR_F_WRITE_ENC,
+                .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
             },
             {
                 /* TX: watch -> phone (read + notify) */
                 .uuid = &gatt_chr_tx_uuid.u,
                 .access_cb = ble_tx_read_cb,
-                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY | BLE_GATT_CHR_F_READ_ENC,
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
                 .val_handle = &bt_tx_val_handle,
             },
             {0}
@@ -152,10 +197,10 @@ static void ble_app_on_sync(void)
     ble_svc_gap_device_name_set("SmartWatchC6");
     
     // Configure security
+    ble_hs_cfg.sm_io_cap = BLE_HS_IO_DISPLAY_ONLY;
     ble_hs_cfg.sm_bonding = 1;
     ble_hs_cfg.sm_mitm = 1;
     ble_hs_cfg.sm_sc = 1;
-    ble_hs_cfg.sm_io_cap = BLE_HS_IO_DISPLAY_ONLY;
     ble_hs_cfg.sm_our_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
     ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
     
@@ -171,51 +216,98 @@ static int ble_app_gap_event(struct ble_gap_event *event, void *arg)
             if (event->connect.status == 0) {
                 connected = true;
                 conn_handle = event->connect.conn_handle;
+                mtu_negotiated = false; // Reset MTU flag
                 ESP_LOGI(TAG, "Connected to device");
-                // Pairing will be initiated automatically due to security requirements
+
+                // Generate random PIN (6 digits)
+                pairing_pin = (esp_random() % 900000) + 100000;
+                pairing_confirmed = false;
+
+                // Show pairing screen
+                gui_lock();
+                ui_show_pairing(pairing_pin);
+                gui_unlock();
+
+                // Start PIN sending timer (2 seconds from now)
+                if (pairing_timer == NULL) {
+                    pairing_timer = xTimerCreate("pairing_send", pdMS_TO_TICKS(2000), pdFALSE, NULL, send_pin_callback);
+                }
+                if (pairing_timer != NULL) {
+                    xTimerStart(pairing_timer, 0);
+                }
+
+                // Start pairing timeout timer (30 seconds from now)
+                if (pairing_timeout_timer == NULL) {
+                    pairing_timeout_timer = xTimerCreate("pairing_timeout", pdMS_TO_TICKS(30000), pdFALSE, NULL, pairing_timer_callback);
+                }
+                if (pairing_timeout_timer != NULL) {
+                    xTimerStart(pairing_timeout_timer, 0);
+                }
             } else {
                 ESP_LOGE(TAG, "Connection failed: %d", event->connect.status);
             }
             break;
 
+        case BLE_GAP_EVENT_MTU:
+            if (event->mtu.conn_handle == conn_handle && event->mtu.channel_id == BLE_L2CAP_CID_ATT) {
+                mtu_negotiated = true;
+                ESP_LOGI(TAG, "MTU negotiated: %d bytes", event->mtu.value);
+                
+                // Now send the PIN message with proper MTU
+                send_pin_now();
+            }
+            break;
+
         case BLE_GAP_EVENT_DISCONNECT:
             connected = false;
-            conn_handle = 0;
-            pairing_confirmed = false;
+            conn_handle = BLE_HS_CONN_HANDLE_NONE;
             ESP_LOGI(TAG, "Disconnected");
+            gui_lock();
             ui_hide_pairing();
+            gui_unlock();
+            // Clean up timers
             if (pairing_timer != NULL) {
                 xTimerStop(pairing_timer, 0);
+                pairing_timer = NULL;
+            }
+            if (pairing_timeout_timer != NULL) {
+                xTimerStop(pairing_timeout_timer, 0);
+                pairing_timeout_timer = NULL;
             }
             break;
 
         case BLE_GAP_EVENT_PASSKEY_ACTION:
-            if (event->passkey.params.action == BLE_SM_IOACT_DISP) {
-                pairing_pin = event->passkey.params.numcmp;
-                ESP_LOGI(TAG, "Display passkey: %06d", pairing_pin);
-                ui_show_pairing(pairing_pin);
-                
-                // Start pairing timer (30 seconds)
-                if (pairing_timer == NULL) {
-                    pairing_timer = xTimerCreate("pairing", pdMS_TO_TICKS(30000), pdFALSE, NULL, pairing_timer_callback);
-                }
-                if (pairing_timer != NULL) {
-                    xTimerStart(pairing_timer, 0);
-                }
+            ESP_LOGI(TAG, "Passkey action requested");
+            // Provide our PIN as the passkey
+            struct ble_sm_io pkey = {0};
+            pkey.action = event->passkey.params.action;
+            if (pkey.action == BLE_SM_IOACT_DISP) {
+                pkey.passkey = pairing_pin;
+                ble_sm_inject_io(conn_handle, &pkey);
             }
             break;
 
         case BLE_GAP_EVENT_ENC_CHANGE:
+            ESP_LOGI(TAG, "Encryption change event: status=%d", event->enc_change.status);
             if (event->enc_change.status == 0) {
-                ESP_LOGI(TAG, "Encryption enabled");
+                // Pairing/encryption successful
+                ESP_LOGI(TAG, "Pairing completed successfully!");
                 pairing_confirmed = true;
-                ui_hide_pairing();
+                
+                // Clean up timers
                 if (pairing_timer != NULL) {
                     xTimerStop(pairing_timer, 0);
+                    pairing_timer = NULL;
                 }
+                if (pairing_timeout_timer != NULL) {
+                    xTimerStop(pairing_timeout_timer, 0);
+                    pairing_timeout_timer = NULL;
+                }
+                
+                // Request to hide pairing screen (will be processed in LVGL task)
+                pairing_hide_requested = true;
             } else {
-                ESP_LOGE(TAG, "Encryption failed: %d", event->enc_change.status);
-                ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+                ESP_LOGE(TAG, "Pairing failed with status: %d", event->enc_change.status);
             }
             break;
 
@@ -272,12 +364,12 @@ void bluetooth_enable(void)
     }
 
     // Start periodic test timer (5000 ms = 5 seconds)
-    if (bt_test_timer == NULL) {
-        bt_test_timer = xTimerCreate("bt_test", pdMS_TO_TICKS(5000), pdTRUE, NULL, bt_test_timer_callback);
-    }
-    if (bt_test_timer != NULL) {
-        xTimerStart(bt_test_timer, 0);
-    }
+    // if (bt_test_timer == NULL) {
+    //     bt_test_timer = xTimerCreate("bt_test", pdMS_TO_TICKS(5000), pdTRUE, NULL, bt_test_timer_callback);
+    // }
+    // if (bt_test_timer != NULL) {
+    //     xTimerStart(bt_test_timer, 0);
+    // }
 }
 
 //  PUBLIC API: DISABLE 
@@ -310,6 +402,35 @@ bool bluetooth_is_enabled(void)
     return ble_enabled;
 }
 
+// Confirm pairing
+void bluetooth_confirm_pairing(void)
+{
+    ESP_LOGI(TAG, "Confirming pairing - conn_handle: %d, connected: %d", conn_handle, connected);
+    
+    // Only proceed if we're still connected
+    if (!connected || conn_handle == BLE_HS_CONN_HANDLE_NONE) {
+        ESP_LOGW(TAG, "Cannot confirm pairing - not connected");
+        return;
+    }
+    
+    if (pairing_timer != NULL) {
+        xTimerStop(pairing_timer, 0);
+        pairing_timer = NULL;
+    }
+    if (pairing_timeout_timer != NULL) {
+        xTimerStop(pairing_timeout_timer, 0);
+        pairing_timeout_timer = NULL;
+    }
+    pairing_confirmed = true;
+    
+    // With BLE_HS_IO_DISPLAY_ONLY, the BLE stack handles pairing automatically
+    // when the central confirms. No need to call ble_sm_inject_io.
+    // Set flag to hide UI - will be checked by LVGL task poll.
+    pairing_hide_requested = true;
+
+    ESP_LOGI(TAG, "Pairing confirmed successfully");
+}
+
 // Send bytes to connected centrals via GATT notification.
 // Copies up to BT_TX_MAX_LEN bytes into the characteristic value and
 // triggers a chr_updated which will send notifications to subscribed clients.
@@ -331,4 +452,15 @@ void bluetooth_init(void)
 {
     // Start OFF
     ble_enabled = false;
+}
+
+// Poll for UI updates - call this from LVGL task
+void bluetooth_poll(void)
+{
+    if (pairing_hide_requested) {
+        ESP_LOGI(TAG, "Poll: pairing_hide_requested=true, calling ui_hide_pairing()");
+        pairing_hide_requested = false;
+        ui_hide_pairing();
+        ESP_LOGI(TAG, "Poll: ui_hide_pairing() returned");
+    }
 }

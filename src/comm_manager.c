@@ -2,6 +2,7 @@
 #include "bluetooth.h"
 #include "esp_log.h"
 #include <string.h>
+#include "ui_manager.h"
 
 // app-provided callback
 static comm_rx_callback_t app_rx_cb = NULL;
@@ -23,7 +24,13 @@ void comm_manager_on_rx(const char *msg)
 {
     ESP_LOGI("COMM", "Phone -> Watch: %s", msg);
     
-    // Handle messages from phone (if any)
+    // Handle pairing confirmation
+    if (strcmp(msg, "confirm") == 0) {
+        ESP_LOGI("COMM", "Pairing confirmed");
+        bluetooth_confirm_pairing();
+        return;
+    }
+    
     if (app_rx_cb) app_rx_cb(msg);
 }
 

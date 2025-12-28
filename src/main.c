@@ -150,8 +150,8 @@ static void lvgl_tick_cb(void *arg) {
 }
 
 // ---------------- GUI LOCK ----------------
-static void gui_lock(void) { if (gui_mutex) xSemaphoreTake(gui_mutex, portMAX_DELAY); }
-static void gui_unlock(void) { if (gui_mutex) xSemaphoreGive(gui_mutex); }
+void gui_lock(void) { if (gui_mutex) xSemaphoreTake(gui_mutex, portMAX_DELAY); }
+void gui_unlock(void) { if (gui_mutex) xSemaphoreGive(gui_mutex); }
 
 // ---------------- I2C & TOUCH ----------------
 static esp_err_t i2c_bus_init(void) {
@@ -247,13 +247,25 @@ static void touch_task(void *arg) {
 
     touch_sample_t samp = {0};
     (void)cst816_read_sample(&samp);
+    
+    static uint32_t touch_count = 0;
 
     while (1) {
         uint8_t sig;
         (void)xQueueReceive(touch_evt_queue, &sig, pdMS_TO_TICKS(20));
         if (s_touch_irq_flag || s_last_touch.pressed) {
+            uint32_t touch_start = esp_timer_get_time();
             if(cst816_read_sample(&samp) == ESP_OK)
                 s_last_touch = samp;
+            uint32_t touch_time = esp_timer_get_time() - touch_start;
+            
+            // Log touch events
+            touch_count++;
+            if (samp.pressed) {
+                ESP_LOGI("TOUCH", "Event #%lu | X:%d Y:%d | Latency: %lu us | Heap: %lu bytes", 
+                         touch_count, samp.x, samp.y, touch_time, esp_get_free_heap_size());
+            }
+            
             s_touch_irq_flag = false;
         }
     }
@@ -320,14 +332,18 @@ void app_main(void) {
     bsp_qmi8658_init(g_i2c_bus);
     bsp_qmi8658_start_step_detection();
     bsp_qmi8658_test();
+    ESP_LOGI(TAG, "ACCEL_TEST_STARTED");
 
     ESP_ERROR_CHECK(cst816_add_device());
     uint8_t id = 0;
     if (cst816_probe_id(&id) == ESP_OK)
         ESP_LOGI(TAG, "CST816 ID=0x%02X", id);
+    ESP_LOGI(TAG, "TOUCH_INIT_DONE");
 
     // --- LVGL Init ---
+    ESP_LOGI(TAG, "LVGL_INIT_START");
     lv_init();
+    ESP_LOGI(TAG, "LVGL_INIT_DONE");
     g_last_activity_ms = lv_tick_get();
     gui_mutex = xSemaphoreCreateMutex();
 
@@ -339,6 +355,7 @@ void app_main(void) {
         ESP_LOGE(TAG, "Failed to allocate LVGL buffers");
         return;
     }
+    ESP_LOGI(TAG, "LVGL_BUFFERS_ALLOCATED");
 
     lv_display_t *disp = lv_display_create(LCD_WIDTH, LCD_HEIGHT);
     lv_display_set_flush_cb(disp, lvgl_flush_cb);
@@ -359,6 +376,7 @@ void app_main(void) {
     ESP_ERROR_CHECK(esp_timer_start_periodic(tick_timer, LV_TICK_PERIOD_MS * 1000));
 
     ui_manager_init();
+    ESP_LOGI(TAG, "UI_MANAGER_INIT_DONE");
     gui_lock(); ui_show_menu(); gui_unlock();
     //max_set_ui_update_callback(activity_screen_update);
     // max_init(g_i2c_bus);
@@ -375,7 +393,10 @@ void app_main(void) {
     ESP_ERROR_CHECK(ret);
 
     // --- Bluetooth ---
+    ESP_LOGI(TAG, "BLE_INIT_START");
     bluetooth_init();
+    bluetooth_enable();
+    ESP_LOGI(TAG, "BLE_INIT_DONE");
 
     // --- FreeRTOS tasks ---
     touch_evt_queue = xQueueCreate(8, 1);
@@ -383,8 +404,18 @@ void app_main(void) {
     xTaskCreate(clock_task, "clock_task", 6144, NULL, 5, NULL);
 
     // --- Main loop ---
+    static uint32_t last_perf_log = 0;
     while (1) {
-        gui_lock(); lv_timer_handler(); gui_unlock();
+        uint32_t loop_start = esp_timer_get_time();
+        
+        gui_lock();
+        lv_timer_handler();
+        bluetooth_poll(); // Check for BLE UI updates
+        gui_unlock();
+        
+        uint32_t loop_end = esp_timer_get_time();
+        uint32_t loop_time_us = loop_end - loop_start;
+        
         uint32_t now = lv_tick_get();
 
         if (g_backlight_on && now - g_last_activity_ms > 10000) {
@@ -392,8 +423,15 @@ void app_main(void) {
             g_backlight_on = false;
         }
 
-        // Optional: light sleep
-        // if (!g_backlight_on) enter_light_sleep();
+        // Log performance metrics every 2 seconds
+        if (now - last_perf_log > 2000) {
+            uint32_t free_heap = esp_get_free_heap_size();
+            ESP_LOGI("PERF", "Loop: %lu us | Heap: %lu bytes | Free: %lu%%", 
+                     loop_time_us, 
+                     free_heap,
+                     (free_heap * 100) / 327680);
+            last_perf_log = now;
+        }
 
         vTaskDelay(pdMS_TO_TICKS(10));
     }
