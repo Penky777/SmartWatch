@@ -48,13 +48,15 @@ class _BleScreenState extends State<BleScreen> {
 
     _pairingSub = repo.pairingPins.listen((pin) async {
       if (!mounted) return;
-      final accepted = await _showPairingDialog(pin);
+
+      final accepted = await _showPairingDialogOkCancel(pin);
       if (accepted) {
         await repo.confirmPairing();
       } else {
         await repo.rejectPairing();
       }
     });
+
 
     // scan (na debug dávam filterService=false; keď bude všetko sedieť, daj true)
     repo.startScan(timeout: const Duration(seconds: 20), filterService: false);
@@ -95,6 +97,58 @@ class _BleScreenState extends State<BleScreen> {
     );
     return res == true;
   }
+
+  Future<bool> _showPairingDialogOkCancel(String pin) async {
+    final res = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'PIN',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 10),
+              SelectableText(
+                pin,
+                style: const TextStyle(
+                  fontSize: 40,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 4,
+                ),
+              ),
+              const SizedBox(height: 18),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.of(ctx).pop(false),
+                      child: const Text('Zrušiť'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.of(ctx).pop(true),
+                      child: const Text('OK'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    return res == true;
+  }
+
 
   @override
   Widget build(BuildContext context) {
