@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../widgets/screen_scafold.dart';
 import '../widgets/section_card.dart';
+import '../test_ids.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -17,6 +18,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget build(BuildContext context) {
     return ScreenScaffold(
       title: "Nastavenia",
+      titleKey: TKeys.titleSettings,
       subtitle: "Aplikácia a hodinky",
       child: ListView(
         children: [

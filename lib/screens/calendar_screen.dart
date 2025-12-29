@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../widgets/screen_scafold.dart';
 import '../widgets/section_card.dart';
+import '../test_ids.dart';
 
 class CalendarScreen extends StatelessWidget {
   const CalendarScreen({super.key});
@@ -9,6 +10,7 @@ class CalendarScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return ScreenScaffold(
       title: "Kalendár",
+      titleKey: TKeys.titleCalendar,
       subtitle: "Najbližšie udalosti",
       actions: [IconButton(onPressed: () {}, icon: const Icon(Icons.add))],
       child: ListView(

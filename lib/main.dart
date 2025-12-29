@@ -9,6 +9,7 @@ void main() {
 
 class SmartWatchApp extends StatelessWidget {
   const SmartWatchApp({super.key});
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(

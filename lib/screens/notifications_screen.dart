@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../widgets/screen_scafold.dart';
 import '../widgets/section_card.dart';
+import '../test_ids.dart';
 
 class NotificationsScreen extends StatelessWidget {
   const NotificationsScreen({super.key});
@@ -9,6 +10,7 @@ class NotificationsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return ScreenScaffold(
       title: "Notifikácie",
+      titleKey: TKeys.titleNotifications,
       subtitle: "Posledné upozornenia",
       actions: [IconButton(onPressed: () {}, icon: const Icon(Icons.clear_all))],
       child: ListView(

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../widgets/screen_scafold.dart';
 import '../widgets/section_card.dart';
 import '../widgets/metric_chip.dart';
+import '../test_ids.dart';
 
 class ActivityScreen extends StatelessWidget {
   const ActivityScreen({super.key});
@@ -10,6 +11,7 @@ class ActivityScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return ScreenScaffold(
       title: "Aktivita",
+      titleKey: TKeys.titleActivity,
       subtitle: "Kroky, kalórie, vzdialenosť",
       actions: [IconButton(onPressed: () {}, icon: const Icon(Icons.sync))],
       child: ListView(

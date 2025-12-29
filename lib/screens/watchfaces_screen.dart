@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../widgets/screen_scafold.dart';
 import '../widgets/section_card.dart';
+import '../test_ids.dart';
 
 class WatchfacesScreen extends StatelessWidget {
   const WatchfacesScreen({super.key});
@@ -9,6 +10,7 @@ class WatchfacesScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final faces = List.generate(8, (i) => "Watchface ${i + 1}");
     return ScreenScaffold(
+      titleKey: TKeys.titleWatchfaces,
       title: "Watchfaces",
       subtitle: "Vyber si vzhľad hodiniek",
       child: ListView(

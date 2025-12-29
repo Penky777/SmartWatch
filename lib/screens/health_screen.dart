@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../widgets/screen_scafold.dart';
 import '../widgets/section_card.dart';
 import '../widgets/metric_chip.dart';
+import '../test_ids.dart';
 
 class HealthScreen extends StatelessWidget {
   const HealthScreen({super.key});
@@ -10,6 +11,7 @@ class HealthScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return ScreenScaffold(
       title: "Zdravie",
+      titleKey: TKeys.titleHealth,
       subtitle: "Tep, SpO₂, stres",
       actions: [IconButton(onPressed: () {}, icon: const Icon(Icons.refresh))],
       child: ListView(

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../widgets/screen_scafold.dart';
 import '../widgets/section_card.dart';
 import '../router.dart';
+import '../test_ids.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -9,18 +10,20 @@ class HomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final items = [
-      _HomeItem(Icons.directions_run, "Aktivita", AppRoutes.activity),
-      _HomeItem(Icons.favorite, "Zdravie", AppRoutes.health),
-      _HomeItem(Icons.cloud, "Počasie", AppRoutes.weather),
-      _HomeItem(Icons.calendar_month, "Kalendár", AppRoutes.calendar),
-      _HomeItem(Icons.notifications, "Notifikácie", AppRoutes.notifications),
-      _HomeItem(Icons.watch, "Watchfaces", AppRoutes.watchfaces),
-      _HomeItem(Icons.settings, "Nastavenia", AppRoutes.settings),
-      _HomeItem(Icons.bluetooth, "Bluetooth", AppRoutes.ble),
+      _HomeItem(Icons.directions_run, "Aktivita", AppRoutes.activity, TKeys.tileActivity),
+      _HomeItem(Icons.favorite, "Zdravie", AppRoutes.health, TKeys.tileHealth),
+      _HomeItem(Icons.cloud, "Počasie", AppRoutes.weather, TKeys.tileWeather),
+      _HomeItem(Icons.calendar_month, "Kalendár", AppRoutes.calendar, TKeys.tileCalendar),
+      _HomeItem(Icons.notifications, "Notifikácie", AppRoutes.notifications, TKeys.tileNotifications),
+      _HomeItem(Icons.watch, "Watchfaces", AppRoutes.watchfaces, TKeys.tileWatchfaces),
+      _HomeItem(Icons.settings, "Nastavenia", AppRoutes.settings, TKeys.tileSettings),
+      _HomeItem(Icons.bluetooth, "Bluetooth", AppRoutes.ble, TKeys.tileBluetooth),
     ];
+
 
     return ScreenScaffold(
       title: "SmartWatch",
+      titleKey: TKeys.titleHome,
       subtitle: "Všetko dôležité na jednom mieste",
       child: Column(
         children: [
@@ -68,17 +71,20 @@ class _HomeItem {
   final IconData icon;
   final String label;
   final String route;
-  _HomeItem(this.icon, this.label, this.route);
+  final Key key;
+  _HomeItem(this.icon, this.label, this.route, this.key);
 }
 
 class _HomeTile extends StatelessWidget {
   final _HomeItem item;
   const _HomeTile({required this.item});
 
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return InkWell(
+      key: item.key,
       onTap: () => Navigator.pushNamed(context, item.route),
       borderRadius: BorderRadius.circular(16),
       child: Container(
@@ -168,4 +174,5 @@ class _SummaryTile extends StatelessWidget {
       ),
     );
   }
+
 }

@@ -6,6 +6,7 @@ class ScreenScaffold extends StatelessWidget {
   final String? subtitle;
   final List<Widget>? actions;
   final Widget child;
+  final Key? titleKey;
 
   const ScreenScaffold({
     super.key,
@@ -13,6 +14,7 @@ class ScreenScaffold extends StatelessWidget {
     required this.child,
     this.subtitle,
     this.actions,
+    this.titleKey,
   });
 
   @override
@@ -32,7 +34,7 @@ class ScreenScaffold extends StatelessWidget {
           title: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(title),
+              Text(title, key: titleKey),
               if (subtitle != null)
                 Text(
                   subtitle!,

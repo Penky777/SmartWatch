@@ -4,6 +4,7 @@ import '../widgets/section_card.dart';
 
 import '../Services/weather_service.dart';
 import '../Services/location_service.dart';
+import '../test_ids.dart';
 
 class WeatherScreen extends StatefulWidget {
   const WeatherScreen({super.key});
@@ -83,6 +84,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
 
     return ScreenScaffold(
       title: "Počasie",
+      titleKey: TKeys.titleWeather,
       subtitle: subtitle,
       actions: [
         IconButton(
@@ -132,6 +134,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
     if (_error != null) {
       return Text(
         "Chyba: $_error",
+        key: TKeys.weatherLocationError,
         style: TextStyle(
           color: Theme.of(context).colorScheme.error,
         ),

@@ -1,30 +1,22 @@
 import 'package:flutter/material.dart';
 
 class AppScaffold extends StatelessWidget {
-  /// Ak chceš vlastný AppBar, môžeš ho sem poslať.
   final PreferredSizeWidget? appBar;
-
-  /// Titulok pre defaultný AppBar (použije sa len ak `appBar == null`).
   final String? title;
 
-  /// Akcie vpravo hore v defaultnom AppBare.
+  final Key? titleKey;
+
   final List<Widget>? actions;
-
-  /// Novšie použitie
   final Widget? body;
-
-  /// Staršie použitie (alias na `body`)
   final Widget? child;
-
   final Widget? bottom;
-
-  /// Ak používaš index na spodnú navigáciu, nechávam ho tu (inak pokojne zmaž).
   final int? index;
 
   const AppScaffold({
     super.key,
     this.appBar,
     this.title,
+    this.titleKey,
     this.actions,
     this.body,
     this.child,
@@ -52,7 +44,10 @@ class AppScaffold extends StatelessWidget {
               backgroundColor: Colors.transparent,
               elevation: 0,
               automaticallyImplyLeading: Navigator.canPop(context),
-              title: Text(title ?? ''),
+
+              // ✅ UPRAV (len key pridáš)
+              title: Text(title ?? '', key: titleKey),
+
               centerTitle: false,
               actions: actions,
             ),
@@ -62,3 +57,4 @@ class AppScaffold extends StatelessWidget {
     );
   }
 }
+

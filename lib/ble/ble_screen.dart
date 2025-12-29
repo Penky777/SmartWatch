@@ -4,9 +4,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../widgets/app_scaffold.dart';
 import '../../widgets/status_badge.dart';
-import '../../ble/ble_repository.dart'; // uprav cestu podľa teba
+import '../../ble/ble_repository.dart';
 import '../../ble/ble_client.dart';
 import 'package:flutter_reactive_ble/flutter_reactive_ble.dart' hide BleStatus;
+import '../test_ids.dart';
 
 class BleScreen extends StatefulWidget {
   const BleScreen({super.key});
@@ -170,6 +171,7 @@ class _BleScreenState extends State<BleScreen> {
 
     return AppScaffold(
       title: 'BLE hodinky',
+      titleKey: TKeys.titleBle,
       actions: [
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -183,6 +185,7 @@ class _BleScreenState extends State<BleScreen> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               ElevatedButton.icon(
+                key: TKeys.bleBtnSearch,
                 onPressed: () {
                   _devices.clear();
                   repo.startScan(timeout: const Duration(seconds: 20), filterService: false);
@@ -193,6 +196,7 @@ class _BleScreenState extends State<BleScreen> {
               ),
               const SizedBox(width: 12),
               OutlinedButton.icon(
+                key: TKeys.bleBtnStop,
                 onPressed: repo.stopScan,
                 icon: const Icon(Icons.stop),
                 label: const Text('Stop'),
@@ -202,7 +206,7 @@ class _BleScreenState extends State<BleScreen> {
           const Divider(),
           Expanded(
             child: _devices.isEmpty
-                ? const Center(child: Text('Žiadne zariadenia.'))
+                ? const Center(child: Text('Žiadne zariadenia.', key: TKeys.bleEmptyText))
                 : ListView.builder(
               itemCount: _devices.length,
               itemBuilder: (context, i) {

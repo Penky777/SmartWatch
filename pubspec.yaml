@@ -34,12 +34,23 @@ dependencies:
   flutter_reactive_ble: ^5.3.1
   permission_handler: ^11.3.1
   collection: ^1.18.0
+  appium_flutter_server: ^0.0.3
 
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^5.0.0
+
+  flutter_driver:
+    sdk: flutter
+
+  test: any
+
+  integration_test:
+    sdk: flutter
+
+  appium_flutter_server: ^0.0.33
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
