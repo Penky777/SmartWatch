@@ -32,6 +32,7 @@
 #include "max30102.h"
 #include "activity_screen.h"
 #include "vibration.h"
+#include "bsp_pwr.h"
 
 // ============================================================================
 // PIN CONFIGURATION
@@ -77,9 +78,9 @@ static QueueHandle_t touch_evt_queue = NULL;
 static SemaphoreHandle_t gui_mutex = NULL;
 static lv_indev_t *indev_touch = NULL;
 
-static uint32_t g_last_activity_ms = 0;
-static bool g_backlight_on = true;
-static uint8_t g_backlight_level = 100;
+uint32_t g_last_activity_ms = 0;
+bool g_backlight_on = true;
+uint8_t g_backlight_level = 100;
 static volatile bool s_touch_irq_flag = false;
 
 typedef struct {
@@ -245,11 +246,13 @@ static void lvgl_touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
     data->continue_reading = false;
 
     if (data->state == LV_INDEV_STATE_PRESSED) {
-        g_last_activity_ms = lv_tick_get();
-        if (!g_backlight_on) {
-            backlight_set(g_backlight_level);
-            g_backlight_on = true;
+    
+        if (bsp_pwr_is_screen_sleeping()) {
+            bsp_pwr_wake_screen();
+            return;  // Don't process this touch, just wake
         }
+        
+        g_last_activity_ms = lv_tick_get();
     }
 }
 
@@ -403,11 +406,13 @@ static void monitor_task(void *arg) {
             last_check = now;
         }
         
-        // Check for screen timeout
-        if (g_backlight_on && now - g_last_activity_ms > SCREEN_TIMEOUT_MS) {
-            ESP_LOGI(TAG, "Screen timeout - turning off backlight");
-            backlight_set(0);
-            g_backlight_on = false;
+        // ✅ Auto-sleep with power management
+        if (!bsp_pwr_is_screen_sleeping() &&      // Not already sleeping
+            g_backlight_on &&                      // Backlight is on
+            now - g_last_activity_ms > SCREEN_TIMEOUT_MS) {
+            
+            ESP_LOGI(TAG, "Inactivity timeout → Auto-sleep");
+            bsp_pwr_sleep_screen();
         }
         
         vTaskDelay(pdMS_TO_TICKS(500));
@@ -545,6 +550,10 @@ void app_main(void) {
     }
     
     log_heap_stats("boot");
+    // Initialize PWR button
+    ESP_LOGI(TAG, "Initializing power management...");
+    bsp_pwr_init();
+    vTaskDelay(pdMS_TO_TICKS(200));  
     
     // Initialize NVS
     esp_err_t ret = nvs_flash_init();
@@ -563,9 +572,10 @@ void app_main(void) {
     backlight_init();
     backlight_set(100);
     
-    // Initialize I2C bus
+    // ✅ Initialize I2C bus ONCE - used by RTC, IMU, Touch, MAX30102
     ESP_LOGI(TAG, "Initializing I2C bus...");
     ESP_ERROR_CHECK(i2c_bus_init());
+    log_heap_stats("after I2C init");
     
     // Initialize RTC
     ESP_LOGI(TAG, "Initializing RTC...");
@@ -587,12 +597,21 @@ void app_main(void) {
         ESP_LOGW(TAG, "CST816 probe failed");
     }
     
+    // Initialize MAX30102 sensor
+    ESP_LOGI(TAG, "Initializing MAX30102...");
+    ESP_ERROR_CHECK(max_init(g_i2c_bus));
+    
+    // Initialize vibration motor
+    ESP_LOGI(TAG, "Initializing vibration motor...");
+    vibe_init();
+    vibe_pulse();
+    
     log_heap_stats("after hardware init");
     
     // Initialize LVGL
     ESP_ERROR_CHECK(lvgl_init());
     
-    // Create GUI mutex
+    // Create GUI mutex BEFORE using it
     gui_mutex = xSemaphoreCreateMutex();
     if (!gui_mutex) {
         ESP_LOGE(TAG, "Failed to create GUI mutex");
@@ -613,16 +632,16 @@ void app_main(void) {
     log_heap_stats("after UI manager init");
     check_heap_integrity("after UI init");
     
-    // Initialize vibration motor
-    vibe_init();
-    vibe_pulse();
-    
     // Initialize Bluetooth
     ESP_LOGI(TAG, "Initializing Bluetooth...");
     log_heap_stats("before BLE init");
     bluetooth_init();
     bluetooth_enable();
     log_heap_stats("after BLE init");
+    
+    // Create MAX30102 background task
+    ESP_LOGI(TAG, "Creating MAX30102 task...");
+    ESP_ERROR_CHECK(max_create_task());
     
     // Create FreeRTOS tasks
     touch_evt_queue = xQueueCreate(8, 1);
@@ -632,9 +651,10 @@ void app_main(void) {
     }
     
     ESP_LOGI(TAG, "Creating tasks...");
-    xTaskCreate(touch_task, "touch", 8192, NULL, 6, NULL);
-    xTaskCreate(clock_task, "clock", 8192, NULL, 5, NULL);
-    xTaskCreate(monitor_task, "monitor", 4096, NULL, 4, NULL);
+    // ✅ REDUCED: Stack sizes to prevent heap exhaustion
+    xTaskCreate(touch_task, "touch", 4096, NULL, 6, NULL);   // Was 8192
+    xTaskCreate(clock_task, "clock", 3072, NULL, 5, NULL);   // Was 8192
+    xTaskCreate(monitor_task, "monitor", 3072, NULL, 4, NULL);
     
     log_heap_stats("after task creation");
     
@@ -642,34 +662,38 @@ void app_main(void) {
     ESP_LOGI(TAG, "INITIALIZATION COMPLETE");
     ESP_LOGI(TAG, "========================================\n");
     
-    // NEW CODE:
-static uint32_t last_perf_log = 0;
-
-// Force LVGL to render
-vTaskDelay(pdMS_TO_TICKS(50));
-while (1) {
+    // Force initial render
+    vTaskDelay(pdMS_TO_TICKS(50));
     
-    uint32_t timeout = lv_timer_handler();  // Returns ms until next timer
-    bluetooth_poll();
-    gui_unlock();
+    // Main loop
+    static uint32_t last_perf_log = 0;
     
-    uint32_t now = lv_tick_get();
-
-    // Screen timeout check
-    if (g_backlight_on && now - g_last_activity_ms > 10000) {
-        backlight_set(0);
-        g_backlight_on = false;
+    while (1) {
+        // ✅ LOCK before LVGL operations
+        gui_lock();
+        uint32_t timeout = lv_timer_handler();
+        gui_unlock();
+        
+        // Bluetooth polling (doesn't need GUI lock)
+        bluetooth_poll();
+        
+        uint32_t now = lv_tick_get();
+        
+        // Screen timeout check
+        if (g_backlight_on && now - g_last_activity_ms > SCREEN_TIMEOUT_MS) {
+            ESP_LOGI(TAG, "Screen timeout");
+            backlight_set(0);
+            g_backlight_on = false;
+        }
+        
+        // Periodic logging
+        if (now - last_perf_log > 2000) {
+            ESP_LOGI("PERF", "Heap: %u bytes", (unsigned)esp_get_free_heap_size());
+            last_perf_log = now;
+        }
+        
+        // Smart delay based on LVGL timer needs
+        uint32_t delay_ms = (timeout > 0 && timeout < 20) ? timeout : 10;
+        vTaskDelay(pdMS_TO_TICKS(delay_ms));
     }
-
-    // Periodic logging
-    if (now - last_perf_log > 2000) {
-        ESP_LOGI("PERF", "Heap: %u bytes", (unsigned)esp_get_free_heap_size());
-        last_perf_log = now;
-    }
-
-    // Smart delay based on LVGL timers
-    uint32_t delay_ms = (timeout > 0 && timeout < 20) ? timeout : 5;
-    vTaskDelay(pdMS_TO_TICKS(delay_ms));
-    }
-
 }
