@@ -33,6 +33,7 @@
 #include "activity_screen.h"
 #include "vibration.h"
 #include "bsp_pwr.h"
+#include "bsp_battery.h"
 
 // ============================================================================
 // PIN CONFIGURATION
@@ -572,7 +573,7 @@ void app_main(void) {
     backlight_init();
     backlight_set(100);
     
-    // ✅ Initialize I2C bus ONCE - used by RTC, IMU, Touch, MAX30102
+    // Initialize I2C bus ONCE - used by RTC, IMU, Touch, MAX30102
     ESP_LOGI(TAG, "Initializing I2C bus...");
     ESP_ERROR_CHECK(i2c_bus_init());
     log_heap_stats("after I2C init");
@@ -608,6 +609,10 @@ void app_main(void) {
     
     log_heap_stats("after hardware init");
     
+    //Initialize battery read
+    ESP_LOGI(TAG,"Initializing battery");
+    bsp_battery_init();
+
     // Initialize LVGL
     ESP_ERROR_CHECK(lvgl_init());
     
@@ -667,6 +672,8 @@ void app_main(void) {
     
     // Main loop
     static uint32_t last_perf_log = 0;
+
+    get_battery_percentage();
     
     while (1) {
         // ✅ LOCK before LVGL operations
@@ -692,6 +699,9 @@ void app_main(void) {
             last_perf_log = now;
         }
         
+
+
+
         // Smart delay based on LVGL timer needs
         uint32_t delay_ms = (timeout > 0 && timeout < 20) ? timeout : 10;
         vTaskDelay(pdMS_TO_TICKS(delay_ms));
