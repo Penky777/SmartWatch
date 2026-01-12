@@ -770,8 +770,7 @@ if (max_err != ESP_OK) {
         // Screen timeout check
         if (g_backlight_on && now - g_last_activity_ms > SCREEN_TIMEOUT_MS) {
             ESP_LOGI(TAG, "Screen timeout");
-            backlight_set(0);
-            g_backlight_on = false;
+            bsp_pwr_sleep_screen();  // Use proper API instead of directly modifying state
         }
         
         // Periodic logging

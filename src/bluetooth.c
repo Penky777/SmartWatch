@@ -41,6 +41,7 @@ static TimerHandle_t pairing_timeout_timer = NULL;
 static bool pairing_confirmed = false;
 static bool mtu_negotiated = false;
 static volatile bool pairing_hide_requested = false;
+static volatile uint32_t pairing_complete_time = 0;  // Track when pairing completed
 static struct ble_gap_event_listener gap_event_listener;
 
 //  GATT SERVICE
@@ -79,11 +80,8 @@ static void bt_test_timer_callback(TimerHandle_t xTimer)
     // Demo SpO2 (98%)
     int spo2 = 98;
     
-    // Demo battery (90% for now)
-    int battery = 90;
-    
     char json_msg[128];
-    snprintf(json_msg, sizeof(json_msg), "{\"heartRate\":%d,\"steps\":%lu,\"spo2\":%d,\"battery\":%d}\n", mock_hr, steps, spo2, battery);
+    snprintf(json_msg, sizeof(json_msg), "{\"heartRate\":%d,\"steps\":%lu,\"spo2\":%d}\n", mock_hr, steps, spo2);
     bluetooth_send_bytes((const uint8_t *)json_msg, strlen(json_msg));
     ESP_LOGI(TAG, "TX -> Phone: %s", json_msg);
 }
@@ -288,11 +286,12 @@ static int ble_app_gap_event(struct ble_gap_event *event, void *arg)
             break;
 
         case BLE_GAP_EVENT_ENC_CHANGE:
-            ESP_LOGI(TAG, "Encryption change event: status=%d", event->enc_change.status);
+            ESP_LOGI(TAG, "Encryption change event: status=%d, conn_handle=%d", event->enc_change.status, event->enc_change.conn_handle);
             if (event->enc_change.status == 0) {
                 // Pairing/encryption successful
                 ESP_LOGI(TAG, "Pairing completed successfully!");
                 pairing_confirmed = true;
+                pairing_complete_time = lv_tick_get();  // Record completion time
                 
                 // Clean up timers
                 if (pairing_timer != NULL) {
@@ -304,14 +303,20 @@ static int ble_app_gap_event(struct ble_gap_event *event, void *arg)
                     pairing_timeout_timer = NULL;
                 }
                 
+                // Send acknowledgment back to phone to confirm pairing is complete
+                bluetooth_send_bytes((const uint8_t *)"{\"status\":\"paired\"}", strlen("{\"status\":\"paired\"}"));
+                ESP_LOGI(TAG, "Sent pairing acknowledgment to phone");
+                
                 // Request to hide pairing screen (will be processed in LVGL task)
                 pairing_hide_requested = true;
+                ESP_LOGI(TAG, "Set pairing_hide_requested = true");
             } else {
                 ESP_LOGE(TAG, "Pairing failed with status: %d", event->enc_change.status);
             }
             break;
 
         default:
+            ESP_LOGI(TAG, "GAP event: %d", event->type);
             break;
     }
     return 0;
@@ -364,12 +369,12 @@ void bluetooth_enable(void)
     }
 
     // Start periodic test timer (5000 ms = 5 seconds)
-    // if (bt_test_timer == NULL) {
-    //     bt_test_timer = xTimerCreate("bt_test", pdMS_TO_TICKS(5000), pdTRUE, NULL, bt_test_timer_callback);
-    // }
-    // if (bt_test_timer != NULL) {
-    //     xTimerStart(bt_test_timer, 0);
-    // }
+    if (bt_test_timer == NULL) {
+        bt_test_timer = xTimerCreate("bt_test", pdMS_TO_TICKS(5000), pdTRUE, NULL, bt_test_timer_callback);
+    }
+    if (bt_test_timer != NULL) {
+        xTimerStart(bt_test_timer, 0);
+    }
 }
 
 //  PUBLIC API: DISABLE 
@@ -425,6 +430,10 @@ void bluetooth_confirm_pairing(void)
     
     // With BLE_HS_IO_DISPLAY_ONLY, the BLE stack handles pairing automatically
     // when the central confirms. No need to call ble_sm_inject_io.
+    // Send acknowledgment back to phone
+    bluetooth_send_bytes((const uint8_t *)"{\"status\":\"paired\"}", strlen("{\"status\":\"paired\"}"));
+    ESP_LOGI(TAG, "Sent pairing acknowledgment to phone");
+    
     // Set flag to hide UI - will be checked by LVGL task poll.
     pairing_hide_requested = true;
 
@@ -460,7 +469,19 @@ void bluetooth_poll(void)
     if (pairing_hide_requested) {
         ESP_LOGI(TAG, "Poll: pairing_hide_requested=true, calling ui_hide_pairing()");
         pairing_hide_requested = false;
+        // Don't hold GUI lock - ui_hide_pairing needs to do heavy LVGL operations
         ui_hide_pairing();
         ESP_LOGI(TAG, "Poll: ui_hide_pairing() returned");
+    }
+    
+    // Fallback: if pairing was confirmed but not hidden yet, hide after 500ms
+    if (pairing_confirmed && connected && pairing_complete_time > 0) {
+        uint32_t now = lv_tick_get();
+        if (now - pairing_complete_time > 500) {
+            ESP_LOGI(TAG, "Pairing hide fallback triggered");
+            pairing_complete_time = 0;  // Clear to avoid repeated calls
+            // Don't hold GUI lock - ui_hide_pairing needs to do heavy LVGL operations
+            ui_hide_pairing();
+        }
     }
 }
