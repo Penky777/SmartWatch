@@ -80,11 +80,8 @@ static void bt_test_timer_callback(TimerHandle_t xTimer)
     // Demo SpO2 (98%)
     int spo2 = 98;
     
-    // Demo battery (90% for now)
-    int battery = 90;
-    
     char json_msg[128];
-    snprintf(json_msg, sizeof(json_msg), "{\"heartRate\":%d,\"steps\":%lu,\"spo2\":%d,\"battery\":%d}\n", mock_hr, steps, spo2, battery);
+    snprintf(json_msg, sizeof(json_msg), "{\"heartRate\":%d,\"steps\":%lu,\"spo2\":%d}\n", mock_hr, steps, spo2);
     bluetooth_send_bytes((const uint8_t *)json_msg, strlen(json_msg));
     ESP_LOGI(TAG, "TX -> Phone: %s", json_msg);
 }
@@ -372,12 +369,12 @@ void bluetooth_enable(void)
     }
 
     // Start periodic test timer (5000 ms = 5 seconds)
-    // if (bt_test_timer == NULL) {
-    //     bt_test_timer = xTimerCreate("bt_test", pdMS_TO_TICKS(5000), pdTRUE, NULL, bt_test_timer_callback);
-    // }
-    // if (bt_test_timer != NULL) {
-    //     xTimerStart(bt_test_timer, 0);
-    // }
+    if (bt_test_timer == NULL) {
+        bt_test_timer = xTimerCreate("bt_test", pdMS_TO_TICKS(5000), pdTRUE, NULL, bt_test_timer_callback);
+    }
+    if (bt_test_timer != NULL) {
+        xTimerStart(bt_test_timer, 0);
+    }
 }
 
 //  PUBLIC API: DISABLE 
