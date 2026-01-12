@@ -4,6 +4,7 @@
 void ui_manager_init(void);
 
 void ui_show_menu(void);
+void ui_show_menu_no_anim(void);
 void ui_show_calendar(void);
 void ui_show_activity(void);
 void ui_show_settings(void);

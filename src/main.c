@@ -600,7 +600,10 @@ void app_main(void) {
     
     // Initialize MAX30102 sensor
     ESP_LOGI(TAG, "Initializing MAX30102...");
-    ESP_ERROR_CHECK(max_init(g_i2c_bus));
+    esp_err_t max_ret = max_init(g_i2c_bus);
+    if (max_ret != ESP_OK) {
+        ESP_LOGW(TAG, "MAX30102 initialization failed: %s (continuing anyway)", esp_err_to_name(max_ret));
+    }
     
     // Initialize vibration motor
     ESP_LOGI(TAG, "Initializing vibration motor...");
@@ -689,8 +692,7 @@ void app_main(void) {
         // Screen timeout check
         if (g_backlight_on && now - g_last_activity_ms > SCREEN_TIMEOUT_MS) {
             ESP_LOGI(TAG, "Screen timeout");
-            backlight_set(0);
-            g_backlight_on = false;
+            bsp_pwr_sleep_screen();  // Use proper API instead of directly modifying state
         }
         
         // Periodic logging

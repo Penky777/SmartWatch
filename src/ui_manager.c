@@ -158,5 +158,15 @@ void ui_hide_pairing(void) {
         screen_pairing = NULL;
     }
     
-    ui_show_menu();
+    // Don't call ui_show_menu() here - just show menu without animation to avoid blocking
+    ui_show_menu_no_anim();
+}
+
+void ui_show_menu_no_anim(void) {
+    ESP_LOGI(TAG, "Switch to MENU (no animation)");
+    
+    screen_menu = build_menu_screen();
+    lv_scr_load(screen_menu);  // No animation - immediate load
+    current_screen = screen_menu;
+    vTaskDelay(1);
 }
