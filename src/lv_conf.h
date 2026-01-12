@@ -30,7 +30,7 @@
  *====================*/
 
 /* Size of the internal memory (in bytes) for LVGL */
-#define LV_MEM_SIZE        (32U * 1024U)   
+#define LV_MEM_SIZE        (64U * 1024U)   
 
 /*====================
    Text and fonts

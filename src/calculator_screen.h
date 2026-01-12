@@ -3,7 +3,6 @@
 
 #include "lvgl.h"
 
-// Build and return the calculator screen
 lv_obj_t *build_calculator_screen(void);
 
 #endif

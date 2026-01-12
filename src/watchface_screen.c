@@ -52,7 +52,7 @@ lv_obj_t *build_watchface_screen(void)
     // Tap to menu
     lv_obj_add_event_cb(scr, screen_tap_event_cb, LV_EVENT_CLICKED, NULL);
     
-    ESP_LOGI(TAG, "✓ Watchface screen built");
+    ESP_LOGI(TAG, "Watchface screen built");
     return scr;
 }
 

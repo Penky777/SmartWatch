@@ -725,7 +725,7 @@ if (max_err != ESP_OK) {
          
     
     if (pwr_event != PWR_EVENT_NONE) {
-        gui_lock();  // Lock if we're doing UI operations
+        gui_lock();  
         
         switch (pwr_event) {
             case PWR_EVENT_WAKE:
@@ -762,7 +762,7 @@ if (max_err != ESP_OK) {
         uint32_t timeout = lv_timer_handler();
         gui_unlock();
         
-        // Bluetooth polling (doesn't need GUI lock)
+        // Bluetooth polling 
         bluetooth_poll();
         
         uint32_t now = lv_tick_get();
@@ -770,19 +770,29 @@ if (max_err != ESP_OK) {
         // Screen timeout check
         if (g_backlight_on && now - g_last_activity_ms > SCREEN_TIMEOUT_MS) {
             ESP_LOGI(TAG, "Screen timeout");
-            bsp_pwr_sleep_screen();  // Use proper API instead of directly modifying state
+            bsp_pwr_sleep_screen();  
         }
         
-        // Periodic logging
+        
         if (now - last_perf_log > 2000) {
             ESP_LOGI("PERF", "Heap: %u bytes", (unsigned)esp_get_free_heap_size());
             last_perf_log = now;
         }
         
+        // lv_mem_monitor_t m  on;
+        // lv_mem_monitor(&mon);   
+        // ESP_LOGI("LVGL", "Used: 
+            
+            
+            
+        //     %u/%u bytes (%.1f%%)", 
+        //  mon.used_cnt, mon.total_size, 
+        //  (mon.used_cnt * 100.0f) / mon.total_size);
 
 
 
-        // Smart delay based on LVGL timer needs
+
+        
         uint32_t delay_ms = (timeout > 0 && timeout < 20) ? timeout : 10;
         vTaskDelay(pdMS_TO_TICKS(delay_ms));
     }
