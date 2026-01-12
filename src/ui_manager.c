@@ -6,10 +6,11 @@
 #include "freertos/task.h"
 #include "lvgl.h"
 #include "watchface_screen.h"
+
 static const char *TAG = "UI_MANAGER";
 
 #define MAX_SCREEN_HISTORY 10
-static lv_obj_t *screen_history[MAX_SCREEN_HISTORY]={0};
+static lv_obj_t *screen_history[MAX_SCREEN_HISTORY] = {0};
 static int screen_history_count = 0;
 
 // ========== FORWARD DECLARATIONS ==========
@@ -24,7 +25,7 @@ lv_obj_t *build_brightness_screen(void);
 lv_obj_t *build_time_screen(void);
 lv_obj_t *build_pairing_screen(int pin);
 lv_obj_t *build_flashlight_screen(void);
-
+lv_obj_t *build_detail_screen(const char *date);
 
 
 static void switch_screen(lv_obj_t **cache, lv_obj_t *(*builder)(void), const char *name);
@@ -40,15 +41,40 @@ static lv_obj_t *screen_brightness = NULL;
 static lv_obj_t *screen_reset = NULL;
 static lv_obj_t *screen_time = NULL;
 static lv_obj_t *screen_pairing = NULL;
-static lv_obj_t *current_screen = NULL;
 static lv_obj_t *screen_flashlight = NULL;
+static lv_obj_t *current_screen = NULL;
+static lv_obj_t *screen_detail = NULL;
 
+
+// ========== HELPER FUNCTIONS ==========
 
 static void log_heap(const char *ctx) {
     ESP_LOGI(TAG, "[%s] Heap: %u | Largest: %u", ctx,
         (unsigned)esp_get_free_heap_size(),
         (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
 }
+
+static void push_screen_history(lv_obj_t *screen) {
+    if (screen_history_count < MAX_SCREEN_HISTORY) {
+        screen_history[screen_history_count++] = screen;
+        ESP_LOGD(TAG, "Screen history: %d screens", screen_history_count);
+    } else {
+        ESP_LOGW(TAG, "Screen history full! Cannot store more.");
+    }
+}
+
+static lv_obj_t *pop_screen_history(void) {
+    if (screen_history_count > 0) {
+        screen_history_count--;
+        lv_obj_t *prev = screen_history[screen_history_count];
+        screen_history[screen_history_count] = NULL;
+        ESP_LOGI(TAG, "Going back → Screen history: %d screens", screen_history_count);
+        return prev;
+    }
+    return NULL;
+}
+
+// ========== INITIALIZATION ==========
 
 void ui_manager_init(void) {
     ESP_LOGI(TAG, "Init UI Manager");
@@ -64,8 +90,9 @@ void ui_manager_init(void) {
     screen_reset = NULL;
     screen_time = NULL;
     screen_pairing = NULL;
-    current_screen = NULL;
     screen_flashlight = NULL;
+    current_screen = NULL;
+    screen_detail = NULL;
 
 
     screen_history_count = 0;
@@ -77,31 +104,15 @@ void ui_manager_init(void) {
     ESP_LOGI(TAG, "UI Manager ready (screens will be created on-demand)");
 }
 
-
-static void push_screen_history(lv_obj_t *screen){
-    if(screen_history_count < MAX_SCREEN_HISTORY){
-        screen_history[screen_history_count++] = screen;
-        ESP_LOGD(TAG, "Screen history: %d screens", screen_history_count);
-    }else{
-        ESP_LOGW(TAG, "Screen history full! Cannot store more.");
-    }
-}
-static lv_obj_t *pop_screen_history(void) {
-    if (screen_history_count > 0) {
-        screen_history_count--;
-        lv_obj_t *prev = screen_history[screen_history_count];
-        screen_history[screen_history_count] = NULL;
-        ESP_LOGI(TAG, "Going back → Screen history: %d screens", screen_history_count);
-        return prev;
-    }
-    return NULL;
-}
-
-
+// ========== SCREEN SWITCHING ==========
 
 static void switch_screen(lv_obj_t **cache, lv_obj_t *(*builder)(void), const char *name) {
     ESP_LOGI(TAG, "Switch to %s", name);
     log_heap("before switch");
+    
+    if (current_screen) {
+        lv_anim_del(current_screen, NULL);
+    }
     
     if (!(*cache)) {
         ESP_LOGI(TAG, "Creating %s screen...", name);
@@ -119,37 +130,48 @@ static void switch_screen(lv_obj_t **cache, lv_obj_t *(*builder)(void), const ch
         ESP_LOGI(TAG, "%s already active", name);
         return;
     }
+    
+    
     if (current_screen != NULL && current_screen != *cache) {
         push_screen_history(current_screen);
     }
     
-    if (current_screen == NULL) {
-        ESP_LOGI(TAG, "First screen load - no animation");
-        lv_scr_load(*cache);
-        current_screen = *cache;
-    } else {
-        ESP_LOGI(TAG, "Loading with animation (keeping old screen cached)");
-        lv_scr_load_anim(*cache, LV_SCR_LOAD_ANIM_FADE_IN, 150, 0, false);
-        current_screen = *cache;
-    }
+    ESP_LOGI(TAG, "Loading %s screen directly", name);
+    lv_scr_load(*cache);
+    current_screen = *cache;
     
     log_heap("after switch");
-    vTaskDelay(1);
+    vTaskDelay(pdMS_TO_TICKS(10));  // Give time for screen to settle
 }
 
-void ui_show_flashlight(void) {
-    switch_screen(&screen_flashlight, build_flashlight_screen, "FLASHLIGHT");
-    
-    // Set brightness to 100%
-    extern void backlight_set(uint8_t percent);
-    extern uint8_t g_backlight_level;
-    
-    backlight_set(100);
-    g_backlight_level = 100;
-    
-    ESP_LOGI(TAG, "Flashlight ON - brightness at 100%%");
-}
+// ========== PUBLIC SCREEN FUNCTIONS ==========
 
+void ui_show_detail(const char *date) {
+    ESP_LOGI(TAG, "Show detail for: %s", date);
+    
+    // Delete old detail screen
+    if (screen_detail) {
+        lv_obj_del(screen_detail);
+        screen_detail = NULL;
+    }
+    
+    // Stop animations
+    if (current_screen) {
+        lv_anim_del(current_screen, NULL);
+    }
+    
+    // Save to history
+    if (current_screen) {
+        push_screen_history(current_screen);
+    }
+    
+    // Create and show
+    screen_detail = build_detail_screen(date);
+    lv_scr_load(screen_detail);
+    current_screen = screen_detail;
+    
+    vTaskDelay(pdMS_TO_TICKS(10));
+}
 
 void ui_show_watchface(void) {
     switch_screen(&screen_watchface, build_watchface_screen, "WATCHFACE");
@@ -187,27 +209,44 @@ void ui_show_time(void) {
     switch_screen(&screen_time, build_time_screen, "TIME");
 }
 
+void ui_show_flashlight(void) {
+    switch_screen(&screen_flashlight, build_flashlight_screen, "FLASHLIGHT");
+    
+    // Set brightness to 100%
+    extern void backlight_set(uint8_t percent);
+    extern uint8_t g_backlight_level;
+    
+    backlight_set(100);
+    g_backlight_level = 100;
+    
+    ESP_LOGI(TAG, "Flashlight ON - brightness at 100%%");
+}
+
 void ui_show_pairing(int pin) {
     ESP_LOGI(TAG, "Show pairing (PIN: %d)", pin);
     
+    // Stop animations
+    if (current_screen) {
+        lv_anim_del(current_screen, NULL);
+    }
+    
+    // Save to history
     if (current_screen != NULL) {
         push_screen_history(current_screen);
     }
 
+    // Delete old pairing screen
     if (screen_pairing) {
         lv_obj_del(screen_pairing);
     }
     
     screen_pairing = build_pairing_screen(pin);
     
-    if (current_screen == NULL) {
-        lv_scr_load(screen_pairing);
-    } else {
-        lv_scr_load_anim(screen_pairing, LV_SCR_LOAD_ANIM_FADE_IN, 150, 0, false);
-    }
-    
+    // no animation
+    lv_scr_load(screen_pairing);
     current_screen = screen_pairing;
-    vTaskDelay(1);
+    
+    vTaskDelay(pdMS_TO_TICKS(10));
 }
 
 void ui_hide_pairing(void) {
@@ -224,6 +263,9 @@ void ui_hide_pairing(void) {
         ui_show_menu();
     }
 }
+
+// ========== BACK NAVIGATION ==========
+
 bool ui_can_go_back(void) {
     return screen_history_count > 0;
 }
@@ -238,13 +280,13 @@ void ui_go_back(void) {
     if (prev_screen) {
         ESP_LOGI(TAG, "Going back to previous screen");
         
-        if (current_screen == NULL) {
-            lv_scr_load(prev_screen);
-        } else {
-            lv_scr_load_anim(prev_screen, LV_SCR_LOAD_ANIM_FADE_IN, 150, 0, false);
+        if (current_screen) {
+            lv_anim_del(current_screen, NULL);
         }
         
+        lv_scr_load(prev_screen);
         current_screen = prev_screen;
-        vTaskDelay(1);
+        
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }

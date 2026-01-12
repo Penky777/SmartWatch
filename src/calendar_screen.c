@@ -1,6 +1,3 @@
-// calendar_screen.c - Calendar with swipe navigation
-// Complete rewrite with working gesture detection
-
 #include "lvgl.h"
 #include "ui_manager.h"
 #include <stdio.h>
@@ -13,22 +10,15 @@
 
 static const char *TAG = "CALENDAR";
 
-// ==================== SWIPE DETECTION STATE ====================
+// ==================== SWIPE DETECTION ====================
 
 typedef struct {
     lv_point_t press_point;
     lv_point_t release_point;
     bool pressed;
-    uint32_t press_time;
 } swipe_state_t;
 
 static swipe_state_t calendar_swipe = {0};
-static swipe_state_t detail_swipe = {0};
-
-// ==================== DETAIL SCREEN STATE ====================
-
-static lv_obj_t *detail_screen = NULL;
-static char selected_date[32] = {0};
 
 // ==================== FORWARD DECLARATIONS ====================
 
@@ -39,9 +29,6 @@ static lv_obj_t* create_date_row(lv_obj_t *parent, const char *date,
                                   const char *event_text, lv_event_cb_t cb);
 static void date_row_event_cb(lv_event_t *e);
 static void calendar_event_cb(lv_event_t *e);
-static void detail_event_cb(lv_event_t *e);
-static void detail_back_btn_cb(lv_event_t *e);
-static void build_event_detail_screen(lv_obj_t *scr, const char *date);
 static bool detect_swipe_right(swipe_state_t *state);
 
 // ==================== SWIPE DETECTION ====================
@@ -50,11 +37,10 @@ static bool detect_swipe_right(swipe_state_t *state) {
     int dx = state->release_point.x - state->press_point.x;
     int dy = state->release_point.y - state->press_point.y;
     
-    // Must be: rightward (dx > 0), at least 60px, more horizontal than vertical
     bool is_right_swipe = (dx > 60) && (abs(dx) > abs(dy) * 1.5);
     
     if (is_right_swipe) {
-        ESP_LOGI(TAG, "✓ Swipe detected: dx=%d dy=%d", dx, dy);
+        ESP_LOGI(TAG, "✓ Swipe right: dx=%d dy=%d", dx, dy);
     }
     
     return is_right_swipe;
@@ -110,20 +96,23 @@ static lv_obj_t* create_date_row(lv_obj_t *parent, const char *date,
     return row;
 }
 
-// ==================== CALENDAR SCREEN ====================
+// ==================== BUILD CALENDAR SCREEN ====================
 
 lv_obj_t *build_calendar_screen(void) {
+    ESP_LOGI(TAG, "Building calendar screen...");
+    
     lv_obj_t *scr = lv_obj_create(NULL);
     
     lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
     
-    // Enable scrolling and gestures
+    // Enable scrolling
     lv_obj_set_scroll_dir(scr, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(scr, LV_SCROLLBAR_MODE_OFF);
     
-    // Register unified event handler
-    lv_obj_add_event_cb(scr, calendar_event_cb, LV_EVENT_ALL, NULL);
+    // Register swipe events
+    lv_obj_add_event_cb(scr, calendar_event_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(scr, calendar_event_cb, LV_EVENT_RELEASED, NULL);
 
     // Layout
     lv_obj_set_flex_flow(scr, LV_FLEX_FLOW_COLUMN);
@@ -157,7 +146,7 @@ lv_obj_t *build_calendar_screen(void) {
     lv_obj_set_style_text_font(month_lbl, &lv_font_montserrat_18, 0);
     lv_obj_set_style_pad_bottom(month_lbl, 10, 0);
 
-    // Date rows
+    // Date rows (±7 days from today)
     static char date_strings[15][16];
     for (int offset = -7; offset <= 7; offset++) {
         struct tm date = current_time;
@@ -167,9 +156,12 @@ lv_obj_t *build_calendar_screen(void) {
         format_date_string(date_strings[idx], 16, &date);
         
         const char *event_text = (offset == 0) ? "TODAY" : "no events";
+        
+        // Create clickable row
         lv_obj_t *row = create_date_row(scr, date_strings[idx], 
                                         event_text, date_row_event_cb);
         
+        // Highlight today
         if (offset == 0) {
             lv_obj_set_style_bg_color(row, lv_color_hex(0x2196F3), 0);
             lv_obj_t *event_lbl = lv_obj_get_child(row, 1);
@@ -189,17 +181,16 @@ lv_obj_t *build_calendar_screen(void) {
     return scr;
 }
 
-// Calendar event handler - handles all events in one place
+// ==================== EVENT HANDLERS ====================
+
 static void calendar_event_cb(lv_event_t *e) {
     lv_event_code_t code = lv_event_get_code(e);
-    lv_obj_t *target = lv_event_get_target(e);
     
     if (code == LV_EVENT_PRESSED) {
         lv_indev_t *indev = lv_indev_get_act();
         if (indev) {
             lv_indev_get_point(indev, &calendar_swipe.press_point);
             calendar_swipe.pressed = true;
-            calendar_swipe.press_time = lv_tick_get();
         }
     }
     else if (code == LV_EVENT_RELEASED) {
@@ -209,143 +200,20 @@ static void calendar_event_cb(lv_event_t *e) {
             calendar_swipe.pressed = false;
             
             if (detect_swipe_right(&calendar_swipe)) {
-                ESP_LOGI(TAG, "Swipe → Menu");
+                ESP_LOGI(TAG, "Swipe → Going back");
                 
-                if (detail_screen) {
-                    lv_obj_del(detail_screen);
-                    detail_screen = NULL;
+                if (ui_can_go_back()) {
+                    ui_go_back();
+                } else {
+                    ui_show_menu();
                 }
-                
-                ui_show_menu();
             }
         }
     }
 }
 
-// Date row clicked - show detail
 static void date_row_event_cb(lv_event_t *e) {
     const char *date = (const char*)lv_event_get_user_data(e);
-    
-    snprintf(selected_date, sizeof(selected_date), "%s", date);
-    ESP_LOGI(TAG, "Date selected: %s", selected_date);
-    
-    if (detail_screen) {
-        lv_obj_del(detail_screen);
-    }
-    
-    detail_screen = lv_obj_create(NULL);
-    build_event_detail_screen(detail_screen, selected_date);
-    
-    lv_scr_load_anim(detail_screen, LV_SCR_LOAD_ANIM_MOVE_LEFT, 200, 0, false);
-}
-
-// ==================== DETAIL SCREEN ====================
-
-static void build_event_detail_screen(lv_obj_t *scr, const char *date) {
-    lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
-    
-    // Register unified event handler
-    lv_obj_add_event_cb(scr, detail_event_cb, LV_EVENT_ALL, NULL);
-
-    // Title
-    lv_obj_t *title = lv_label_create(scr);
-    char title_text[64];
-    snprintf(title_text, sizeof(title_text), "Events: %s", date);
-    lv_label_set_text(title, title_text);
-    lv_obj_set_style_text_color(title, lv_color_white(), 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 25);
-
-    // Message
-    lv_obj_t *msg = lv_label_create(scr);
-    lv_label_set_text(msg, "No events scheduled");
-    lv_obj_set_style_text_color(msg, lv_color_hex(0x888888), 0);
-    lv_obj_set_style_text_font(msg, &lv_font_montserrat_18, 0);
-    lv_obj_align(msg, LV_ALIGN_CENTER, 0, -10);
-
-    // Back button
-    lv_obj_t *back_btn = lv_btn_create(scr);
-    lv_obj_set_size(back_btn, 140, 50);
-    lv_obj_align(back_btn, LV_ALIGN_BOTTOM_MID, 0, -40);
-    lv_obj_set_style_bg_color(back_btn, lv_color_hex(0x2196F3), 0);
-    lv_obj_set_style_radius(back_btn, 25, 0);
-    
-    // Stop button events from bubbling to parent
-    lv_obj_add_flag(back_btn, LV_OBJ_FLAG_EVENT_BUBBLE);
-    lv_obj_add_event_cb(back_btn, detail_back_btn_cb, LV_EVENT_CLICKED, NULL);
-    
-    lv_obj_t *btn_lbl = lv_label_create(back_btn);
-    lv_label_set_text(btn_lbl, LV_SYMBOL_LEFT " Back");
-    lv_obj_set_style_text_color(btn_lbl, lv_color_white(), 0);
-    lv_obj_set_style_text_font(btn_lbl, &lv_font_montserrat_18, 0);
-    lv_obj_center(btn_lbl);
-    
-    // Make label non-clickable so button gets the event
-    lv_obj_add_flag(btn_lbl, LV_OBJ_FLAG_EVENT_BUBBLE);
-
-    // Hint
-    lv_obj_t *hint = lv_label_create(scr);
-    lv_label_set_text(hint, "Swipe right or tap Back →");
-    lv_obj_set_style_text_color(hint, lv_color_hex(0x666666), 0);
-    lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, 0);
-    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 60);
-    
-    // Reset swipe state
-    memset(&detail_swipe, 0, sizeof(swipe_state_t));
-    
-    ESP_LOGI(TAG, "Detail screen built");
-}
-
-// Detail screen event handler
-static void detail_event_cb(lv_event_t *e) {
-    lv_event_code_t code = lv_event_get_code(e);
-    lv_obj_t *target = lv_event_get_target(e);
-    
-    if (code == LV_EVENT_PRESSED) {
-        lv_indev_t *indev = lv_indev_get_act();
-        if (indev) {
-            lv_indev_get_point(indev, &detail_swipe.press_point);
-            detail_swipe.pressed = true;
-            detail_swipe.press_time = lv_tick_get();
-            ESP_LOGD(TAG, "Touch pressed at X=%d Y=%d", 
-                     detail_swipe.press_point.x, detail_swipe.press_point.y);
-        }
-    }
-    else if (code == LV_EVENT_PRESSING) {
-        // Optional: visual feedback during drag
-    }
-    else if (code == LV_EVENT_RELEASED) {
-        lv_indev_t *indev = lv_indev_get_act();
-        if (indev && detail_swipe.pressed) {
-            lv_indev_get_point(indev, &detail_swipe.release_point);
-            detail_swipe.pressed = false;
-            
-            ESP_LOGD(TAG, "Touch released at X=%d Y=%d", 
-                     detail_swipe.release_point.x, detail_swipe.release_point.y);
-            
-            if (detect_swipe_right(&detail_swipe)) {
-                ESP_LOGI(TAG, "Swipe → Calendar");
-                
-                if (detail_screen) {
-                    lv_obj_del(detail_screen);
-                    detail_screen = NULL;
-                }
-                
-                ui_show_calendar();
-            }
-        }
-    }
-}
-
-// Back button clicked
-static void detail_back_btn_cb(lv_event_t *e) {
-    ESP_LOGI(TAG, "Back button → Calendar");
-    
-    if (detail_screen) {
-        lv_obj_del(detail_screen);
-        detail_screen = NULL;
-    }
-    
-    ui_show_calendar();
+    ESP_LOGI(TAG, "Date clicked: %s", date);
+    ui_show_detail(date);
 }
