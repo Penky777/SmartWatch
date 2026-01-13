@@ -2,12 +2,14 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_reactive_ble/flutter_reactive_ble.dart' hide BleStatus;
+
+import '../../di.dart';
+import '../../ble/ble_repository.dart';
 import '../../widgets/app_scaffold.dart';
 import '../../widgets/status_badge.dart';
-import '../../ble/ble_repository.dart';
-import '../../ble/ble_client.dart';
-import 'package:flutter_reactive_ble/flutter_reactive_ble.dart' hide BleStatus;
 import '../test_ids.dart';
+import 'ble_foreground_service.dart';
 
 class BleScreen extends StatefulWidget {
   const BleScreen({super.key});
@@ -22,22 +24,32 @@ class _BleScreenState extends State<BleScreen> {
   StreamSubscription<DiscoveredDevice>? _scanStreamSub;
   StreamSubscription<BleStatus>? _statusSub;
   StreamSubscription<String>? _pairingSub;
+  StreamSubscription<String>? _consoleSub;
 
   final List<DiscoveredDevice> _devices = [];
   BleStatus _status = BleStatus.idle;
+
+  // Console + input
+  final List<String> _consoleLines = [];
+  final TextEditingController _sendCtrl = TextEditingController();
 
   @override
   void initState() {
     super.initState();
 
-    // ak už repo injektuješ cez DI/provider, tak toto vyhoď a použij to z DI
-    repo = BleRepository(BleClient(FlutterReactiveBle()));
+    // ✅ Repo zo singleton DI (GetIt) -> prežije odchod zo stránky
+    repo = getIt<BleRepository>();
 
-    _statusSub = repo.status.listen((s) {
+    // status
+    _statusSub = repo.status.listen((s) async {
       if (!mounted) return;
       setState(() => _status = s);
+      if (s == BleStatus.connected){
+        await startBleService();
+      }
     });
 
+    // scan results
     _scanStreamSub = repo.scannedDevices.listen((d) {
       if (!mounted) return;
       final i = _devices.indexWhere((x) => x.id == d.id);
@@ -47,20 +59,38 @@ class _BleScreenState extends State<BleScreen> {
       });
     });
 
+    // ✅ console history + live updates
+    _consoleLines
+      ..clear()
+      ..addAll(repo.consoleHistory);
+
+    _consoleSub = repo.console.listen((line) {
+      if (!mounted) return;
+      setState(() {
+        _consoleLines.insert(0, line);
+        if (_consoleLines.length > 500) _consoleLines.removeLast();
+      });
+    });
+
+    // pairing dialog
     _pairingSub = repo.pairingPins.listen((pin) async {
       if (!mounted) return;
 
       final accepted = await _showPairingDialogOkCancel(pin);
       if (accepted) {
         await repo.confirmPairing();
+        // ✅ tu spusti foreground service
+        await startBleService();
       } else {
         await repo.rejectPairing();
+        await stopBleService();
       }
     });
 
-
-    // scan (na debug dávam filterService=false; keď bude všetko sedieť, daj true)
-    repo.startScan(timeout: const Duration(seconds: 20), filterService: false);
+    // scan len ak nie sme práve connected (aby sme neotravovali)
+    if (_status != BleStatus.connected) {
+      repo.startScan(timeout: const Duration(seconds: 20), filterService: false);
+    }
   }
 
   @override
@@ -68,35 +98,10 @@ class _BleScreenState extends State<BleScreen> {
     _scanStreamSub?.cancel();
     _statusSub?.cancel();
     _pairingSub?.cancel();
-    repo.dispose();
-    super.dispose();
-  }
+    _consoleSub?.cancel();
+    _sendCtrl.dispose();
 
-  Future<bool> _showPairingDialog(String pin) async {
-    final res = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Pairing'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Sedí tento PIN na hodinkách?'),
-            const SizedBox(height: 12),
-            SelectableText(
-              pin,
-              style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w700, letterSpacing: 2),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Nie')),
-          ElevatedButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Áno')),
-        ],
-      ),
-    );
-    return res == true;
+    super.dispose();
   }
 
   Future<bool> _showPairingDialogOkCancel(String pin) async {
@@ -150,7 +155,6 @@ class _BleScreenState extends State<BleScreen> {
     return res == true;
   }
 
-
   @override
   Widget build(BuildContext context) {
     Widget badge;
@@ -161,10 +165,7 @@ class _BleScreenState extends State<BleScreen> {
       case BleStatus.connected:
         badge = const StatusBadge.connected();
         break;
-      case BleStatus.disconnected:
-      case BleStatus.idle:
-      case BleStatus.scanning:
-      case BleStatus.error:
+      default:
         badge = const StatusBadge.disconnected();
         break;
     }
@@ -181,6 +182,8 @@ class _BleScreenState extends State<BleScreen> {
       body: Column(
         children: [
           const SizedBox(height: 8),
+
+          // Buttons
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
@@ -188,7 +191,10 @@ class _BleScreenState extends State<BleScreen> {
                 key: TKeys.bleBtnSearch,
                 onPressed: () {
                   _devices.clear();
-                  repo.startScan(timeout: const Duration(seconds: 20), filterService: false);
+                  repo.startScan(
+                    timeout: const Duration(seconds: 20),
+                    filterService: false,
+                  );
                   setState(() {});
                 },
                 icon: const Icon(Icons.search),
@@ -201,12 +207,24 @@ class _BleScreenState extends State<BleScreen> {
                 icon: const Icon(Icons.stop),
                 label: const Text('Stop'),
               ),
+              const SizedBox(width: 12),
+              OutlinedButton.icon(
+                onPressed: repo.disconnect, // manuálne odpojenie
+                icon: const Icon(Icons.link_off),
+                label: const Text('Odpojiť'),
+              ),
             ],
           ),
+
           const Divider(),
+
+          // Devices list
           Expanded(
+            flex: 4,
             child: _devices.isEmpty
-                ? const Center(child: Text('Žiadne zariadenia.', key: TKeys.bleEmptyText))
+                ? const Center(
+              child: Text('Žiadne zariadenia.', key: TKeys.bleEmptyText),
+            )
                 : ListView.builder(
               itemCount: _devices.length,
               itemBuilder: (context, i) {
@@ -221,8 +239,78 @@ class _BleScreenState extends State<BleScreen> {
               },
             ),
           ),
+
+          const Divider(),
+
+          // Console
+          Expanded(
+            flex: 3,
+            child: _buildConsole(context),
+          ),
+
+          // Input bar
+          _buildInputBar(),
         ],
       ),
     );
+  }
+
+  Widget _buildConsole(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.25),
+        border: Border.all(
+          color: Theme.of(context).colorScheme.outline.withOpacity(0.3),
+        ),
+      ),
+      child: _consoleLines.isEmpty
+          ? const Align(
+        alignment: Alignment.topLeft,
+        child: Text('Konzola je prázdna.'),
+      )
+          : ListView.separated(
+        reverse: true,
+        itemCount: _consoleLines.length,
+        separatorBuilder: (_, __) => const Divider(height: 12),
+        itemBuilder: (_, i) => Text(_consoleLines[i]),
+      ),
+    );
+  }
+
+  Widget _buildInputBar() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _sendCtrl,
+              decoration: const InputDecoration(
+                hintText: 'Správa pre hodinky…',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              onSubmitted: _send,
+            ),
+          ),
+          const SizedBox(width: 8),
+          ElevatedButton.icon(
+            onPressed: () => _send(_sendCtrl.text),
+            icon: const Icon(Icons.send),
+            label: const Text('Poslať'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _send(String text) {
+    final t = text.trim();
+    if (t.isEmpty) return;
+    _sendCtrl.clear();
+    repo.sendString(t);
   }
 }
