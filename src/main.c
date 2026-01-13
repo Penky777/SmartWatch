@@ -703,8 +703,8 @@ if (max_err != ESP_OK) {
     ESP_LOGI(TAG, "Creating tasks...");
 
     xTaskCreate(touch_task, "touch", 8192, NULL, 6, NULL);   // Was 8192
-    xTaskCreate(clock_task, "clock", 4096, NULL, 5, NULL);   // Was 8192
-    xTaskCreate(monitor_task, "monitor", 3072, NULL, 4, NULL);
+    xTaskCreate(clock_task, "clock", 4096, NULL, 5, NULL);   // Was 4096
+    xTaskCreate(monitor_task, "monitor", 3072, NULL, 4, NULL); // Was 3072
     
     log_heap_stats("after task creation");
     
