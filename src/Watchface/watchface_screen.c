@@ -1,8 +1,8 @@
 #include "watchface_screen.h"
-#include "ui_manager.h"
-#include "bsp_pcf85063.h"
-#include "bsp_battery.h"
-#include "icons/watchface_bg.h"
+#include "../Ui_manager/ui_manager.h"
+#include "../../lib/PCF85063/bsp_pcf85063.h"
+#include "../Bsp_bat/bsp_battery.h"
+#include "../icons/watchface_bg.h"
 #include <stdio.h>
 #include <time.h>
 #include "esp_log.h"

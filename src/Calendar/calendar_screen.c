@@ -1,11 +1,11 @@
 #include "lvgl.h"
-#include "ui_manager.h"
+#include "../Ui_manager/ui_manager.h"
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
 #include <stdbool.h>
 #include <stdlib.h>
-#include "bsp_pcf85063.h"
+#include "../../lib/PCF85063/bsp_pcf85063.h"
 #include "esp_log.h"
 
 static const char *TAG = "CALENDAR";

@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "lvgl.h"
-#include "ui_manager.h"
+#include "../Ui_manager/ui_manager.h"
 
 // Static label reference for updating time (persists across screen loads)
 static lv_obj_t *time_label = NULL;

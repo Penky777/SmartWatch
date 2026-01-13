@@ -1,5 +1,5 @@
 #include "lvgl.h"
-#include "ui_manager.h"
+#include "../Ui_manager/ui_manager.h"
 #include <stdio.h>
 
 // Forward declarations

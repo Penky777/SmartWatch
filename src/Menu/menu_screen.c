@@ -1,9 +1,9 @@
 #include "lvgl.h"
-#include "ui_manager.h"
-#include "icons/Calendar.h"
-#include "icons/Activity.h"
-#include "icons/Settings.h"
-#include "icons/sun.h"
+#include "../Ui_manager/ui_manager.h"
+#include "../icons/Calendar.h"
+#include "../icons/Activity.h"
+#include "../icons/Settings.h"
+#include "../icons/sun.h"
 
 // ---------- Forward declarations ----------
 lv_obj_t *build_menu_screen(void);

@@ -5,7 +5,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lvgl.h"
-#include "watchface_screen.h"
+#include "../Watchface/watchface_screen.h"
 
 static const char *TAG = "UI_MANAGER";
 

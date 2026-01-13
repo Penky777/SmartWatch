@@ -1,8 +1,8 @@
 #include "comm_manager.h"
-#include "bluetooth.h"
+#include "../Bluetooth/bluetooth.h"
 #include "esp_log.h"
 #include <string.h>
-#include "ui_manager.h"
+#include "../Ui_manager/ui_manager.h"
 
 // app-provided callback
 static comm_rx_callback_t app_rx_cb = NULL;

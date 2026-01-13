@@ -1,7 +1,7 @@
 #include "lvgl.h"
-#include "ui_manager.h"
-#include "brightness_screen.h"
-#include "bluetooth.h"
+#include "../Ui_manager/ui_manager.h"
+#include "../Brightness/brightness_screen.h"
+#include "../Bluetooth/bluetooth.h"
 
 // Forward declarations
 static void bluetooth_toggle_event_cb(lv_event_t *e);
