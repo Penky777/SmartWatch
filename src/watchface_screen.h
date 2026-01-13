@@ -29,6 +29,7 @@ void watchface_update_battery(uint8_t percent);
  * @param steps Current step count
  */
 void watchface_update_steps(uint32_t steps);
+void watchface_update_date(const char *date_str);
 
 #ifdef __cplusplus
 }
