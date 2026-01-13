@@ -15,9 +15,9 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
 
-#include "comm_manager.h"
-#include "bsp_qmi8658.h"
-#include "ui_manager.h"
+#include "../comm_mng/comm_manager.h"
+#include "../Bsp_qmi/bsp_qmi8658.h"
+#include "../Ui_manager/ui_manager.h"
 #include "gui.h"
 
 static const char *TAG = "BLE_C6";

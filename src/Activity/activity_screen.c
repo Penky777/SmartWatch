@@ -1,11 +1,11 @@
 #include "lvgl.h"
-#include "ui_manager.h"
+#include "../Ui_manager/ui_manager.h"
 #include <stdio.h>
-#include "icons/steps_80.h"
-#include "icons/heart_19.h"
-#include "icons/blood_drip_21.h"
-#include "max30102.h"
-#include "bsp_qmi8658.h"
+#include "../icons/steps_80.h"
+#include "../icons/heart_19.h"
+#include "../icons/blood_drip_21.h"
+#include "../Max30102/max30102.h"
+#include "../Bsp_qmi/bsp_qmi8658.h"
 #include "esp_log.h"
 
 static const char *TAG = "ACTIVITY_SCREEN";

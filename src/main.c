@@ -2,9 +2,9 @@
 #include <string.h>
 #include <time.h>
 #include <stdbool.h>
-#include "bluetooth.h"
+#include "./Bluetooth/bluetooth.h"
 #include "nvs_flash.h"
-#include "ui_manager.h"
+#include "./Ui_manager/ui_manager.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -22,19 +22,19 @@
 #include "esp_lcd_panel_ops.h"
 #include "esp_heap_caps.h"
 #include "lvgl.h"
-#include "bsp_pcf85063.h"
-#include "bsp_qmi8658.h"
-#include "time_screen.h"
-#include "menu_screen.h"
-#include "settings_screen.h"
+#include "../../lib/PCF85063/bsp_pcf85063.h"
+#include "./Bsp_qmi/bsp_qmi8658.h"
+#include "./Time/time_screen.h"
+#include "./Menu/menu_screen.h"
+#include "./settings/settings_screen.h"
 #include "esp_sleep.h"
 #include "esp_pm.h"
-#include "max30102.h"
-#include "activity_screen.h"
-#include "vibration.h"
-#include "bsp_pwr.h"
-#include "bsp_battery.h"
-#include "watchface_screen.h"
+#include "./Max30102/max30102.h"
+#include "./Activity/activity_screen.h"
+#include "./Vibration/vibration.h"
+#include "./bsp_pwr/bsp_pwr.h"
+#include "./Bsp_bat/bsp_battery.h"
+#include "./Watchface/watchface_screen.h"
 
 // ============================================================================
 // PIN CONFIGURATION

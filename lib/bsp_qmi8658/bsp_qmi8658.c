@@ -6,7 +6,7 @@
 #include <string.h>
 
 #include "esp_log.h"
-#include "comm_manager.h"
+#include "../../src/comm_mng/comm_manager.h"
 
 #include "bsp_i2c.h"
 
