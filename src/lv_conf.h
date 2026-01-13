@@ -30,7 +30,7 @@
  *====================*/
 
 /* Size of the internal memory (in bytes) for LVGL */
-#define LV_MEM_SIZE        (32U * 1024U)   
+#define LV_MEM_SIZE        (64U * 1024U)   
 
 /*====================
    Text and fonts
@@ -44,6 +44,7 @@
 #define LV_FONT_MONTSERRAT_18 1
 #define LV_FONT_MONTSERRAT_20 1
 #define LV_FONT_MONTSERRAT_28 1
+#define LV_FONT_MONTSERRAT_48 1 
 /* Add more sizes if you really need them */
 
 /*====================

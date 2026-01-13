@@ -3,15 +3,18 @@
 #include "icons/Calendar.h"
 #include "icons/Activity.h"
 #include "icons/Settings.h"
+#include "icons/Calculator.h"
+#include "icons/sun.h"
 
 // ---------- Forward declarations ----------
 lv_obj_t *build_menu_screen(void);
 
-// ---------- Event callbacks (NEW) ----------
+// ---------- Event callbacks  ----------
 static void calendar_btn_event_cb(lv_event_t *e) { (void)e; ui_show_calendar(); }
 static void activity_btn_event_cb(lv_event_t *e) { (void)e; ui_show_activity(); }
 static void settings_btn_event_cb(lv_event_t *e) { (void)e; ui_show_settings(); }
-// ---------- Event callbacks ----------
+static void calculator_btn_event_cb(lv_event_t *e) { (void)e; ui_show_calculator(); }
+static void flashlight_btn_event_cb(lv_event_t *e) {(void)e; ui_show_flashlight();}
 
 // ---------- Helper: Create a menu button ----------
 static lv_obj_t* create_menu_button(lv_obj_t *parent, const void *icon_src, const char *label_text, lv_event_cb_t event_cb) {
@@ -74,6 +77,8 @@ lv_obj_t *build_menu_screen(void) {
     create_menu_button(menu_scr, &Calendar, "Calendar", calendar_btn_event_cb);
     create_menu_button(menu_scr, &Activity, "Activity", activity_btn_event_cb);
     create_menu_button(menu_scr, &Settings, "Settings", settings_btn_event_cb);
+    create_menu_button(menu_scr, &Calculator, "Calculator", calculator_btn_event_cb);
+    create_menu_button(menu_scr, &Sun, "Flashlight",flashlight_btn_event_cb);
 
     lv_obj_scroll_to_y(menu_scr, 0, LV_ANIM_OFF);
     return menu_scr;

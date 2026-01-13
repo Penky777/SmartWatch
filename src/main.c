@@ -34,6 +34,7 @@
 #include "vibration.h"
 #include "bsp_pwr.h"
 #include "bsp_battery.h"
+#include "watchface_screen.h"
 
 // ============================================================================
 // PIN CONFIGURATION
@@ -535,6 +536,43 @@ void app_main(void) {
     printf("\n\n========================================\n");
     printf("SMARTWATCH FIRMWARE STARTING\n");
     printf("========================================\n\n");
+
+    ESP_LOGI("MAIN", "========================================");
+    ESP_LOGI("MAIN", "         SMARTWATCH BOOT START         ");
+    ESP_LOGI("MAIN", "========================================");
+    
+    // Check for crash on previous boot
+    esp_reset_reason_t reset_reason = esp_reset_reason();
+    const char *reason_str;
+    
+    switch(reset_reason) {
+        case ESP_RST_UNKNOWN:   reason_str = "Unknown"; break;
+        case ESP_RST_POWERON:   reason_str = "Power on"; break;
+        case ESP_RST_SW:        reason_str = "Software reset"; break;
+        case ESP_RST_PANIC:     reason_str = "⚠️ PANIC/CRASH"; break;
+        case ESP_RST_INT_WDT:   reason_str = "⚠️ WATCHDOG"; break;
+        case ESP_RST_TASK_WDT:  reason_str = "⚠️ TASK WATCHDOG"; break;
+        case ESP_RST_WDT:       reason_str = "⚠️ OTHER WATCHDOG"; break;
+        case ESP_RST_DEEPSLEEP: reason_str = "Deep sleep"; break;
+        case ESP_RST_BROWNOUT:  reason_str = "⚠️ BROWNOUT"; break;
+        default:                reason_str = "Other"; break;
+    }
+    
+    ESP_LOGI("MAIN", "Reset reason: %s (%d)", reason_str, reset_reason);
+    
+    if (reset_reason == ESP_RST_PANIC || 
+        reset_reason == ESP_RST_INT_WDT || 
+        reset_reason == ESP_RST_TASK_WDT) {
+        ESP_LOGE("MAIN", "");
+        ESP_LOGE("MAIN", "╔════════════════════════════════════╗");
+        ESP_LOGE("MAIN", "║  CRASHED ON PREVIOUS BOOT!        ║");
+        ESP_LOGE("MAIN", "║  Check logs above for details     ║");
+        ESP_LOGE("MAIN", "╚════════════════════════════════════╝");
+        ESP_LOGE("MAIN", "");
+        vTaskDelay(pdMS_TO_TICKS(3000));  // Pause to see message
+    }
+    
+    ESP_LOGI("MAIN", "Free heap: %u bytes", esp_get_free_heap_size());
     
     // Check wakeup cause
     esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
@@ -600,10 +638,13 @@ void app_main(void) {
     
     // Initialize MAX30102 sensor
     ESP_LOGI(TAG, "Initializing MAX30102...");
-    esp_err_t max_ret = max_init(g_i2c_bus);
-    if (max_ret != ESP_OK) {
-        ESP_LOGW(TAG, "MAX30102 initialization failed: %s (continuing anyway)", esp_err_to_name(max_ret));
-    }
+    esp_err_t max_err = max_init(g_i2c_bus);
+if (max_err != ESP_OK) {
+    ESP_LOGW("MAIN", "MAX30102 sensor not detected (error 0x%x)", max_err);
+    ESP_LOGW("MAIN", "Continuing without heart rate monitoring...");
+} else {
+    ESP_LOGI("MAIN", "MAX30102 initialized successfully");
+}
     
     // Initialize vibration motor
     ESP_LOGI(TAG, "Initializing vibration motor...");
@@ -634,7 +675,8 @@ void app_main(void) {
     
     gui_lock();
     ui_manager_init();
-    ui_show_menu();
+    ui_show_watchface();
+    vTaskDelay(pdMS_TO_TICKS(500));  
     gui_unlock();
     
     log_heap_stats("after UI manager init");
@@ -659,9 +701,9 @@ void app_main(void) {
     }
     
     ESP_LOGI(TAG, "Creating tasks...");
-    // ✅ REDUCED: Stack sizes to prevent heap exhaustion
-    xTaskCreate(touch_task, "touch", 4096, NULL, 6, NULL);   // Was 8192
-    xTaskCreate(clock_task, "clock", 3072, NULL, 5, NULL);   // Was 8192
+
+    xTaskCreate(touch_task, "touch", 8192, NULL, 6, NULL);   // Was 8192
+    xTaskCreate(clock_task, "clock", 4096, NULL, 5, NULL);   // Was 8192
     xTaskCreate(monitor_task, "monitor", 3072, NULL, 4, NULL);
     
     log_heap_stats("after task creation");
@@ -676,15 +718,51 @@ void app_main(void) {
     // Main loop
     static uint32_t last_perf_log = 0;
 
-    get_battery_percentage();
     
     while (1) {
-        // ✅ LOCK before LVGL operations
+         pwr_event_t pwr_event = bsp_pwr_get_event();
+
+         
+    
+    if (pwr_event != PWR_EVENT_NONE) {
+        gui_lock();  
+        
+        switch (pwr_event) {
+            case PWR_EVENT_WAKE:
+                bsp_pwr_wake_screen();
+                break;
+                
+            case PWR_EVENT_GO_BACK:
+                if (ui_can_go_back()) {
+                    ESP_LOGI(TAG, "→ Going back to previous screen");
+                    ui_go_back();
+                    g_last_activity_ms = lv_tick_get();
+                } else {
+                    ESP_LOGI(TAG, "→ On main screen, going to sleep");
+                    bsp_pwr_sleep_screen();
+                }
+                break;
+                
+            case PWR_EVENT_SHUTDOWN:
+                ESP_LOGW(TAG, "Shutting down...");
+                backlight_set(0);
+                vTaskDelay(pdMS_TO_TICKS(200));
+                gpio_set_level(BAT_EN_PIN, 0);  // Cut power
+                break;
+                
+            default:
+                break;
+        }
+        
+        gui_unlock();
+    }
+    
+        // LOCK before LVGL operations
         gui_lock();
         uint32_t timeout = lv_timer_handler();
         gui_unlock();
         
-        // Bluetooth polling (doesn't need GUI lock)
+        // Bluetooth polling 
         bluetooth_poll();
         
         uint32_t now = lv_tick_get();
@@ -692,19 +770,29 @@ void app_main(void) {
         // Screen timeout check
         if (g_backlight_on && now - g_last_activity_ms > SCREEN_TIMEOUT_MS) {
             ESP_LOGI(TAG, "Screen timeout");
-            bsp_pwr_sleep_screen();  // Use proper API instead of directly modifying state
+            bsp_pwr_sleep_screen();  
         }
         
-        // Periodic logging
+        
         if (now - last_perf_log > 2000) {
             ESP_LOGI("PERF", "Heap: %u bytes", (unsigned)esp_get_free_heap_size());
             last_perf_log = now;
         }
         
+        // lv_mem_monitor_t m  on;
+        // lv_mem_monitor(&mon);   
+        // ESP_LOGI("LVGL", "Used: 
+            
+            
+            
+        //     %u/%u bytes (%.1f%%)", 
+        //  mon.used_cnt, mon.total_size, 
+        //  (mon.used_cnt * 100.0f) / mon.total_size);
 
 
 
-        // Smart delay based on LVGL timer needs
+
+        
         uint32_t delay_ms = (timeout > 0 && timeout < 20) ? timeout : 10;
         vTaskDelay(pdMS_TO_TICKS(delay_ms));
     }
