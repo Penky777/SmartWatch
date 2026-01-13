@@ -13,7 +13,6 @@ lv_obj_t *build_menu_screen(void);
 lv_obj_t *build_calendar_screen(void);
 lv_obj_t *build_activity_screen(void);
 lv_obj_t *build_settings_screen(void);
-lv_obj_t *build_calculator_screen(void);
 lv_obj_t *build_reset_screen(void);
 lv_obj_t *build_brightness_screen(void);
 lv_obj_t *build_time_screen(void);
@@ -24,7 +23,6 @@ static lv_obj_t *screen_menu = NULL;
 static lv_obj_t *screen_calendar = NULL;
 static lv_obj_t *screen_activity = NULL;
 static lv_obj_t *screen_settings = NULL;
-static lv_obj_t *screen_calculator = NULL;
 static lv_obj_t *screen_brightness = NULL;
 static lv_obj_t *screen_reset = NULL;
 static lv_obj_t *screen_time = NULL;
@@ -46,7 +44,6 @@ void ui_manager_init(void) {
     screen_calendar = NULL;
     screen_activity = NULL;
     screen_settings = NULL;
-    screen_calculator = NULL;
     screen_brightness = NULL;
     screen_reset = NULL;
     screen_time = NULL;
@@ -113,9 +110,6 @@ void ui_show_settings(void) {
     switch_screen(&screen_settings, build_settings_screen, "SETTINGS");
 }
 
-void ui_show_calculator(void) {
-    switch_screen(&screen_calculator, build_calculator_screen, "CALCULATOR");
-}
 
 void ui_show_brightness(void) {
     switch_screen(&screen_brightness, build_brightness_screen, "BRIGHTNESS");
