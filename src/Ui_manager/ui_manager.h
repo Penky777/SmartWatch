@@ -16,6 +16,7 @@ void ui_show_pairing(int pin);
 void ui_hide_pairing(void);
 void ui_show_flashlight(void);
 void ui_show_detail(const char *date);
+void ui_show_alerts(void);
 
 
 void ui_go_back(void);

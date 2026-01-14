@@ -25,6 +25,8 @@ lv_obj_t *build_time_screen(void);
 lv_obj_t *build_pairing_screen(int pin);
 lv_obj_t *build_flashlight_screen(void);
 lv_obj_t *build_detail_screen(const char *date);
+lv_obj_t *build_alerts_screen(void);
+
 
 
 static void switch_screen(lv_obj_t **cache, lv_obj_t *(*builder)(void), const char *name);
@@ -42,6 +44,7 @@ static lv_obj_t *screen_pairing = NULL;
 static lv_obj_t *screen_flashlight = NULL;
 static lv_obj_t *current_screen = NULL;
 static lv_obj_t *screen_detail = NULL;
+static lv_obj_t *screen_alerts = NULL;
 
 
 // ========== HELPER FUNCTIONS ==========
@@ -90,6 +93,7 @@ void ui_manager_init(void) {
     screen_flashlight = NULL;
     current_screen = NULL;
     screen_detail = NULL;
+    screen_alerts = NULL;
 
 
     screen_history_count = 0;
@@ -168,6 +172,10 @@ void ui_show_detail(const char *date) {
     current_screen = screen_detail;
     
     vTaskDelay(pdMS_TO_TICKS(10));
+}
+
+void ui_show_alerts(void) {
+    switch_screen(&screen_alerts, build_alerts_screen, "ALERTS");
 }
 
 void ui_show_watchface(void) {
