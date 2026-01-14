@@ -4,6 +4,7 @@
 #include "../icons/Activity.h"
 #include "../icons/Settings.h"
 #include "../icons/sun.h"
+#include "../icons/Bell.h"
 
 // ---------- Forward declarations ----------
 lv_obj_t *build_menu_screen(void);
@@ -13,6 +14,7 @@ static void calendar_btn_event_cb(lv_event_t *e) { (void)e; ui_show_calendar(); 
 static void activity_btn_event_cb(lv_event_t *e) { (void)e; ui_show_activity(); }
 static void settings_btn_event_cb(lv_event_t *e) { (void)e; ui_show_settings(); }
 static void flashlight_btn_event_cb(lv_event_t *e) {(void)e; ui_show_flashlight();}
+static void notifications_btn_event_cb(lv_event_t *e){(void)e; ui_show_alerts();}
 
 // ---------- Helper: Create a menu button ----------
 static lv_obj_t* create_menu_button(lv_obj_t *parent, const void *icon_src, const char *label_text, lv_event_cb_t event_cb) {
@@ -76,6 +78,7 @@ lv_obj_t *build_menu_screen(void) {
     create_menu_button(menu_scr, &Activity, "Activity", activity_btn_event_cb);
     create_menu_button(menu_scr, &Settings, "Settings", settings_btn_event_cb);
     create_menu_button(menu_scr, &Sun, "Flashlight",flashlight_btn_event_cb);
+    create_menu_button(menu_scr, &Bell, "Notifications", notifications_btn_event_cb);
 
     lv_obj_scroll_to_y(menu_scr, 0, LV_ANIM_OFF);
     return menu_scr;
