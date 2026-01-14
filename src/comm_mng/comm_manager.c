@@ -5,6 +5,10 @@
 #include <time.h>
 #include "../Ui_manager/ui_manager.h"
 #include "../lib/PCF85063/bsp_pcf85063.h"
+#include "../alerts_screen.h"
+
+// Forward declaration
+extern int alerts_get_count(void);
 
 // app-provided callback
 static comm_rx_callback_t app_rx_cb = NULL;
@@ -20,6 +24,62 @@ void internal_bt_rx_handler(const unsigned char *data, uint16_t len) {
     
 
     // Or handle raw data directly
+}
+
+// Parse and handle notification JSON
+static void handle_notification(const char *msg)
+{
+    ESP_LOGI("COMM", "Notification received");
+    
+    char title[101] = {0};
+    char text[151] = {0};
+    char app[64] = {0};
+    
+    // Extract title if present (safely)
+    const char *title_start = strstr(msg, "\"title\":\"");
+    if (title_start) {
+        title_start += 9; // skip "title":"
+        const char *title_end = strchr(title_start, '\"');
+        if (title_end && (title_end - title_start) < 100) {
+            int len = title_end - title_start;
+            if (len > 100) len = 100;
+            memcpy(title, title_start, len);
+            title[len] = '\0';
+            ESP_LOGI("COMM", "Notification title: %s", title);
+        }
+    }
+    
+    // Extract text if present (safely)
+    const char *text_start = strstr(msg, "\"text\":\"");
+    if (text_start) {
+        text_start += 8; // skip "text":"
+        const char *text_end = strchr(text_start, '\"');
+        if (text_end && (text_end - text_start) < 150) {
+            int len = text_end - text_start;
+            if (len > 150) len = 150;
+            memcpy(text, text_start, len);
+            text[len] = '\0';
+            ESP_LOGI("COMM", "Notification text: %s", text);
+        }
+    }
+    
+    // Extract app package name if present
+    const char *app_start = strstr(msg, "\"app\":\"");
+    if (app_start) {
+        app_start += 7; // skip "app":"
+        const char *app_end = strchr(app_start, '\"');
+        if (app_end && (app_end - app_start) < 63) {
+            int len = app_end - app_start;
+            if (len > 63) len = 63;
+            memcpy(app, app_start, len);
+            app[len] = '\0';
+            ESP_LOGI("COMM", "Notification app: %s", app);
+        }
+    }
+    
+    // Store notification (UI update will happen in main task)
+    alerts_add_notification(title, text, app);
+    ESP_LOGI("COMM", "Notification stored (count=%d)", alerts_get_count());
 }
 
 // Parse and handle time sync JSON: {"type":"sync","ts":1768301013,"tzMin":60}
@@ -78,7 +138,13 @@ static void handle_time_sync(const char *msg)
 
 void comm_manager_on_rx(const char *msg)
 {
-    ESP_LOGI("COMM", "Phone -> Watch: %s", msg);
+    // Don't log the full message if it's too long (emojis can cause issues)
+    int msg_len = strlen(msg);
+    if (msg_len > 100) {
+        ESP_LOGI("COMM", "Phone -> Watch: [%d bytes] %.80s...", msg_len, msg);
+    } else {
+        ESP_LOGI("COMM", "Phone -> Watch: %s", msg);
+    }
     
     // Handle pairing confirmation
     if (strcmp(msg, "confirm") == 0) {
@@ -94,7 +160,22 @@ void comm_manager_on_rx(const char *msg)
         return;
     }
     
-    if (app_rx_cb) app_rx_cb(msg);
+    // Handle notifications
+    if (strstr(msg, "\"type\":\"notification\"")) {
+        ESP_LOGI("COMM", "Notification request received");
+        handle_notification(msg);
+        return;
+    }
+    
+    // Pass to app callback if registered (but be careful!)
+    if (app_rx_cb) {
+        // Only pass if message is reasonable size
+        if (msg_len < 256) {
+            app_rx_cb(msg);
+        } else {
+            ESP_LOGW("COMM", "Message too long for app callback, ignoring");
+        }
+    }
 }
 
 void comm_manager_on_bt_ready(void)
