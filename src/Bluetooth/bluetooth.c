@@ -15,6 +15,8 @@
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
+#include "freertos/semphr.h"
+#include "freertos/task.h"
 
 #include "../comm_mng/comm_manager.h"
 #include "../Bsp_qmi/bsp_qmi8658.h"
@@ -45,6 +47,8 @@ static bool client_subscribed = false;  // Track if client subscribed to notific
 static volatile bool pairing_hide_requested = false;
 static volatile uint32_t pairing_complete_time = 0;  // Track when pairing completed
 static struct ble_gap_event_listener gap_event_listener;
+static SemaphoreHandle_t ble_stop_sem = NULL;  // Signals when NimBLE host stops
+static TaskHandle_t ble_shutdown_task = NULL;
 
 //  GATT SERVICE
 static const ble_uuid128_t gatt_svc_uuid =
@@ -74,29 +78,17 @@ static int pin_send_count = 0;  // Track how many times PIN has been sent
 // Periodic PIN sending callback (every 1 second while pairing)
 static void pin_send_timer_callback(TimerHandle_t xTimer)
 {
-    if (!ble_enabled || !connected || pairing_confirmed) {
-        // Stop sending PIN once pairing is confirmed
-        if (pin_send_timer != NULL) {
-            xTimerStop(pin_send_timer, 0);
-            pin_send_timer = NULL;
-        }
-        return;
-    }
-    
-    // Only send PIN up to 1 time, then stop
-    if (pairing_pin > 0 && client_subscribed && pin_send_count < 1) {
+    // Send PIN once when timer fires
+    if (connected && pairing_pin > 0 && !pairing_confirmed && client_subscribed) {
         send_pin_now();
         pin_send_count++;
-        ESP_LOGI(TAG, "Periodic PIN send #%d", pin_send_count);
-        
-        // Stop timer after 1 sends
-        if (pin_send_count >= 1) {
-            ESP_LOGI(TAG, "Reached max PIN sends, stopping timer");
-            if (pin_send_timer != NULL) {
-                xTimerStop(pin_send_timer, 0);
-                pin_send_timer = NULL;
-            }
-        }
+        ESP_LOGI(TAG, "Sent PIN after delay (count=%d)", pin_send_count);
+    }
+    
+    // Stop timer after first send
+    if (pin_send_timer != NULL) {
+        xTimerStop(pin_send_timer, 0);
+        pin_send_timer = NULL;
     }
 }
 
@@ -149,15 +141,6 @@ static void pairing_timer_callback(TimerHandle_t xTimer)
     gui_unlock();
 }
 
-// Send PIN callback (2 seconds after connection)
-static void send_pin_callback(TimerHandle_t xTimer)
-{
-    if (!connected) return;
-    
-    // Send PIN regardless of MTU - phone app should handle truncation if needed
-    send_pin_now();
-}
-
 // Send PIN immediately (called when MTU is ready or after timeout)
 static void send_pin_now(void)
 {
@@ -172,7 +155,17 @@ static int ble_rx_write_cb(uint16_t conn_handle, uint16_t attr_handle,
                            struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
     uint16_t len = OS_MBUF_PKTLEN(ctxt->om);
-    uint8_t buf[128];
+    
+    // Allocate buffer large enough for notifications (max 512 bytes)
+    #define BLE_RX_MAX_SIZE 512
+    static uint8_t buf[BLE_RX_MAX_SIZE];
+    
+    // Clamp to buffer size to prevent overflow
+    if (len >= BLE_RX_MAX_SIZE) {
+        ESP_LOGW(TAG, "RX message too large (%d bytes), truncating to %d", len, BLE_RX_MAX_SIZE - 1);
+        len = BLE_RX_MAX_SIZE - 1;
+    }
+    
     os_mbuf_copydata(ctxt->om, 0, len, buf);
     buf[len] = '\0';
 
@@ -236,6 +229,11 @@ void ble_host_task(void *param)
 {
     nimble_port_run();
     nimble_port_freertos_deinit();
+
+    // Notify any waiter that the host task exited
+    if (ble_stop_sem != NULL) {
+        xSemaphoreGive(ble_stop_sem);
+    }
 }
 
 //  BLE sync callback
@@ -284,15 +282,6 @@ static int ble_app_gap_event(struct ble_gap_event *event, void *arg)
                 if (pairing_timeout_timer != NULL) {
                     xTimerStart(pairing_timeout_timer, 0);
                 }
-                
-                // Start periodic PIN sending timer (send PIN every 1 second until subscription or pairing confirmed)
-                // This ensures the app gets the PIN even if there's a timing issue with subscription
-                if (pin_send_timer == NULL) {
-                    pin_send_timer = xTimerCreate("pin_send", pdMS_TO_TICKS(1000), pdTRUE, NULL, pin_send_timer_callback);
-                }
-                if (pin_send_timer != NULL) {
-                    xTimerStart(pin_send_timer, 0);
-                }
             } else {
                 ESP_LOGE(TAG, "Connection failed: %d", event->connect.status);
             }
@@ -307,6 +296,7 @@ static int ble_app_gap_event(struct ble_gap_event *event, void *arg)
                 if (connected && pairing_pin > 0 && !pairing_confirmed && client_subscribed) {
                     vTaskDelay(pdMS_TO_TICKS(100));  // Small delay to ensure stack is ready
                     send_pin_now();
+                    ESP_LOGI(TAG, "Sent PIN after MTU negotiation");
                 }
             }
             break;
@@ -316,9 +306,14 @@ static int ble_app_gap_event(struct ble_gap_event *event, void *arg)
             conn_handle = BLE_HS_CONN_HANDLE_NONE;
             client_subscribed = false;
             ESP_LOGI(TAG, "Disconnected");
-            gui_lock();
-            ui_hide_pairing();
-            gui_unlock();
+            
+            // Only hide pairing screen if we were actually showing it
+            if (pairing_pin > 0 && !pairing_confirmed) {
+                gui_lock();
+                ui_hide_pairing();
+                gui_unlock();
+            }
+            
             // Clean up timers
             if (pairing_timer != NULL) {
                 xTimerStop(pairing_timer, 0);
@@ -391,14 +386,15 @@ static int ble_app_gap_event(struct ble_gap_event *event, void *arg)
                 ESP_LOGI(TAG, "Client subscribed to notifications");
                 client_subscribed = true;
                 
-                // Now that client is subscribed, send the PIN immediately
-                if (connected && pairing_pin > 0 && !pairing_confirmed) {
-                    // Give a tiny delay to ensure subscription is fully set up
-                    vTaskDelay(pdMS_TO_TICKS(50));
-                    send_pin_now();
-                    pin_send_count++;
-                    ESP_LOGI(TAG, "Sent initial PIN after subscription (count=%d)", pin_send_count);
-                    // Don't stop timer - let it send a few more times to ensure app receives it
+                // Start timer to send PIN after 500ms delay (non-blocking)
+                if (connected && pairing_pin > 0 && !pairing_confirmed && pin_send_count == 0) {
+                    if (pin_send_timer == NULL) {
+                        pin_send_timer = xTimerCreate("pin_send", pdMS_TO_TICKS(500), pdFALSE, NULL, pin_send_timer_callback);
+                    }
+                    if (pin_send_timer != NULL) {
+                        xTimerStart(pin_send_timer, 0);
+                        ESP_LOGI(TAG, "Started PIN send timer (500ms)");
+                    }
                 }
             } else {
                 ESP_LOGI(TAG, "Client unsubscribed from notifications");
@@ -445,18 +441,26 @@ void bluetooth_enable(void)
 
     ESP_LOGI(TAG, "Bluetooth ENABLE");
 
-    nimble_port_init();
-    ble_hs_cfg.sync_cb = ble_app_on_sync;
-
-    ble_svc_gap_init();
-    ble_svc_gatt_init();
-
-    ble_gatts_count_cfg(gatt_svcs);
-    ble_gatts_add_svcs(gatt_svcs);
-
+    // Only initialize the NimBLE host once; on subsequent enables just re-advertise
     if (!ble_running) {
+        if (ble_stop_sem == NULL) {
+            ble_stop_sem = xSemaphoreCreateBinary();
+        }
+
+        nimble_port_init();
+        ble_hs_cfg.sync_cb = ble_app_on_sync;
+
+        ble_svc_gap_init();
+        ble_svc_gatt_init();
+
+        ble_gatts_count_cfg(gatt_svcs);
+        ble_gatts_add_svcs(gatt_svcs);
+
         nimble_port_freertos_init(ble_host_task);
         ble_running = true;
+    } else {
+        // If host is already running (we never deinit), restart advertising
+        ble_app_advertise();
     }
 
     // Start periodic test timer (5000 ms = 5 seconds)
@@ -469,26 +473,85 @@ void bluetooth_enable(void)
 }
 
 //  PUBLIC API: DISABLE 
-void bluetooth_disable(void)
+static void ble_shutdown_task_fn(void *param)
 {
-    if (!ble_enabled) return;
-    ble_enabled = false;
+    (void)param;
+    ESP_LOGW(TAG, "Bluetooth DISABLE (async)");
 
-    ESP_LOGW(TAG, "Bluetooth DISABLE");
-
-    // Stop advertising
-    ble_gap_adv_stop();
-
-    if (ble_running) {
-        nimble_port_stop();
-        vTaskDelay(50 / portTICK_PERIOD_MS);
-        nimble_port_deinit();
-        ble_running = false;
+    // Disconnect first so all GAP events settle before tearing NimBLE down
+    if (connected && conn_handle != BLE_HS_CONN_HANDLE_NONE) {
+        ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+        for (int i = 0; i < 15 && connected; i++) {
+            vTaskDelay(pdMS_TO_TICKS(20));
+        }
     }
 
-    // Stop periodic test timer
+    // Stop advertising
+    int rc_adv = ble_gap_adv_stop();
+    if (rc_adv != 0) {
+        ESP_LOGW(TAG, "ble_gap_adv_stop rc=%d", rc_adv);
+    }
+
+    // Stop and delete timers to avoid callbacks hitting a torn-down stack
     if (bt_test_timer != NULL) {
         xTimerStop(bt_test_timer, 0);
+        xTimerDelete(bt_test_timer, 0);
+        bt_test_timer = NULL;
+    }
+    if (pairing_timer != NULL) {
+        xTimerStop(pairing_timer, 0);
+        xTimerDelete(pairing_timer, 0);
+        pairing_timer = NULL;
+    }
+    if (pairing_timeout_timer != NULL) {
+        xTimerStop(pairing_timeout_timer, 0);
+        xTimerDelete(pairing_timeout_timer, 0);
+        pairing_timeout_timer = NULL;
+    }
+    if (pin_send_timer != NULL) {
+        xTimerStop(pin_send_timer, 0);
+        xTimerDelete(pin_send_timer, 0);
+        pin_send_timer = NULL;
+    }
+
+    // Reset state so future enables start cleanly
+    connected = false;
+    conn_handle = BLE_HS_CONN_HANDLE_NONE;
+    client_subscribed = false;
+    mtu_negotiated = false;
+    pairing_pin = 0;
+    pairing_confirmed = false;
+    pairing_complete_time = 0;
+    pairing_hide_requested = false;
+    pin_send_count = 0;
+
+    ESP_LOGI(TAG, "Bluetooth disabled cleanly (stack left running)\n");
+    ble_shutdown_task = NULL;
+    vTaskDelete(NULL);
+}
+
+void bluetooth_disable(void)
+{
+    if (!ble_enabled && ble_shutdown_task == NULL) return;
+    ble_enabled = false;
+
+    // If a shutdown task is already running, don't start another
+    if (ble_shutdown_task != NULL) {
+        ESP_LOGW(TAG, "Bluetooth disable already in progress");
+        return;
+    }
+
+    BaseType_t rc = xTaskCreate(
+        ble_shutdown_task_fn,
+        "ble_shutdown",
+        4096,
+        NULL,
+        tskIDLE_PRIORITY + 2,
+        &ble_shutdown_task);
+
+    if (rc != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create shutdown task (%ld)", (long)rc);
+        ble_shutdown_task = NULL;
     }
 }
 
@@ -548,6 +611,10 @@ void bluetooth_send_bytes(const uint8_t *data, uint16_t len)
         ESP_LOGW(TAG, "Cannot send: not connected");
         return;
     }
+    if (!client_subscribed) {
+        ESP_LOGW(TAG, "Cannot send: client not subscribed to notifications");
+        return;
+    }
 
     if (len > BT_TX_MAX_LEN) len = BT_TX_MAX_LEN;
     memcpy(bt_tx_value, data, len);
@@ -555,7 +622,7 @@ void bluetooth_send_bytes(const uint8_t *data, uint16_t len)
 
     // Notify subscribed centrals. Use the value handle.
     ble_gatts_chr_updated(bt_tx_val_handle);
-    ESP_LOGI(TAG, "Notification sent (%d bytes)", len);
+    ESP_LOGI(TAG, "Notification sent successfully (%d bytes)", len);
 }
 
 //  DO NOT ENABLE BY DEFAULT 
