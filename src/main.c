@@ -35,6 +35,7 @@
 #include "./bsp_pwr/bsp_pwr.h"
 #include "./Bsp_bat/bsp_battery.h"
 #include "./Watchface/watchface_screen.h"
+#include "./alerts_screen.h"
 
 // ============================================================================
 // PIN CONFIGURATION
@@ -766,6 +767,13 @@ if (max_err != ESP_OK) {
         
         // Bluetooth polling 
         bluetooth_poll();
+
+        // Refresh alerts UI if new notifications pending (safe in main task)
+        if (alerts_has_pending_refresh()) {
+            gui_lock();
+            alerts_refresh_if_active();
+            gui_unlock();
+        }
         
         uint32_t now = lv_tick_get();
         
