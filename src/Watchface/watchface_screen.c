@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <time.h>
 #include "esp_log.h"
+#include "Ui_manager/ui_manager.h"
 
 static const char *TAG = "WATCHFACE";
 
@@ -20,6 +21,20 @@ static bool is_dragging = false;
 
 // Forward declarations
 static void screen_tap_event_cb(lv_event_t *e);
+static void watchface_event_cb(lv_event_t *e);
+static void swipe_to_alerts_event_cb(lv_event_t *e);
+
+
+typedef struct {
+    lv_point_t press_point;
+    lv_point_t release_point;
+    bool pressed;
+} swipe_state_t;
+
+static swipe_state_t watchface_swipe = {0};
+
+
+
 
 // ==================== BUILD WATCHFACE ====================
 
@@ -61,14 +76,16 @@ lv_obj_t *build_watchface_screen(void)
     lv_obj_set_style_shadow_opa(date_label, LV_OPA_60, 0);
     lv_obj_align(date_label, LV_ALIGN_OUT_TOP_MID,60,60);
     
-
-    // Tap to menu
-    lv_obj_add_event_cb(scr, screen_tap_event_cb, LV_EVENT_CLICKED, NULL);
     
+    // Tap to menu
+    lv_obj_add_event_cb(scr, screen_tap_event_cb, LV_EVENT_RELEASED, NULL);
+
+    lv_obj_add_event(scr,swipe_to_alerts_event_cb,LV_EVENT_GESTURE,NULL);
+
+
     ESP_LOGI(TAG, "Watchface screen built");
     return scr;
 }
-
 
 
 
@@ -83,7 +100,7 @@ void watchface_update_time(const char *time_str)
 
 static void screen_tap_event_cb(lv_event_t *e)
 {
-    if (lv_event_get_code(e) == LV_EVENT_CLICKED) {
+    if (lv_event_get_code(e) == LV_EVENT_RELEASED) {
         if (overlay_panel) return;
         ui_show_menu();
     }
@@ -92,5 +109,13 @@ void watchface_update_date(const char *date_str)
 {
     if (date_label && date_str) {
         lv_label_set_text(date_label, date_str);
+    }
+}
+
+// Handle right-swipe back to settings
+static void swipe_to_alerts_event_cb(lv_event_t *e) {
+    lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_get_act());
+    if (dir == LV_DIR_RIGHT) {
+        ui_show_alerts();
     }
 }
