@@ -341,6 +341,8 @@ static void clock_task(void *arg) {
                      now.tm_hour, now.tm_min, now.tm_sec);
             
             gui_lock();
+            // Update both watchface and time screen
+            watchface_update_time(buf);
             time_screen_update(buf);
             gui_unlock();
         }
