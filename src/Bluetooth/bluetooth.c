@@ -69,6 +69,7 @@ static uint32_t bt_test_counter = 0;
 
 // Timer for periodic PIN sending during pairing
 static TimerHandle_t pin_send_timer = NULL;
+static int pin_send_count = 0;  // Track how many times PIN has been sent
 
 // Periodic PIN sending callback (every 1 second while pairing)
 static void pin_send_timer_callback(TimerHandle_t xTimer)
@@ -82,8 +83,20 @@ static void pin_send_timer_callback(TimerHandle_t xTimer)
         return;
     }
     
-    if (pairing_pin > 0 && client_subscribed) {
+    // Only send PIN up to 1 time, then stop
+    if (pairing_pin > 0 && client_subscribed && pin_send_count < 1) {
         send_pin_now();
+        pin_send_count++;
+        ESP_LOGI(TAG, "Periodic PIN send #%d", pin_send_count);
+        
+        // Stop timer after 1 sends
+        if (pin_send_count >= 1) {
+            ESP_LOGI(TAG, "Reached max PIN sends, stopping timer");
+            if (pin_send_timer != NULL) {
+                xTimerStop(pin_send_timer, 0);
+                pin_send_timer = NULL;
+            }
+        }
     }
 }
 
@@ -251,6 +264,8 @@ static int ble_app_gap_event(struct ble_gap_event *event, void *arg)
                 connected = true;
                 conn_handle = event->connect.conn_handle;
                 mtu_negotiated = false;
+                client_subscribed = false;  // Reset subscription state
+                pin_send_count = 0;  // Reset PIN send counter
                 ESP_LOGI(TAG, "Connected to device");
 
                 // Generate random PIN (6 digits)
@@ -269,6 +284,15 @@ static int ble_app_gap_event(struct ble_gap_event *event, void *arg)
                 if (pairing_timeout_timer != NULL) {
                     xTimerStart(pairing_timeout_timer, 0);
                 }
+                
+                // Start periodic PIN sending timer (send PIN every 1 second until subscription or pairing confirmed)
+                // This ensures the app gets the PIN even if there's a timing issue with subscription
+                if (pin_send_timer == NULL) {
+                    pin_send_timer = xTimerCreate("pin_send", pdMS_TO_TICKS(1000), pdTRUE, NULL, pin_send_timer_callback);
+                }
+                if (pin_send_timer != NULL) {
+                    xTimerStart(pin_send_timer, 0);
+                }
             } else {
                 ESP_LOGE(TAG, "Connection failed: %d", event->connect.status);
             }
@@ -278,13 +302,19 @@ static int ble_app_gap_event(struct ble_gap_event *event, void *arg)
             if (event->mtu.conn_handle == conn_handle && event->mtu.channel_id == BLE_L2CAP_CID_ATT) {
                 mtu_negotiated = true;
                 ESP_LOGI(TAG, "MTU negotiated: %d bytes", event->mtu.value);
-                // Don't send PIN here - wait for subscription
+                // Try sending PIN immediately after MTU negotiation
+                // This helps if client subscribed before MTU completed
+                if (connected && pairing_pin > 0 && !pairing_confirmed && client_subscribed) {
+                    vTaskDelay(pdMS_TO_TICKS(100));  // Small delay to ensure stack is ready
+                    send_pin_now();
+                }
             }
             break;
 
         case BLE_GAP_EVENT_DISCONNECT:
             connected = false;
             conn_handle = BLE_HS_CONN_HANDLE_NONE;
+            client_subscribed = false;
             ESP_LOGI(TAG, "Disconnected");
             gui_lock();
             ui_hide_pairing();
@@ -297,6 +327,10 @@ static int ble_app_gap_event(struct ble_gap_event *event, void *arg)
             if (pairing_timeout_timer != NULL) {
                 xTimerStop(pairing_timeout_timer, 0);
                 pairing_timeout_timer = NULL;
+            }
+            if (pin_send_timer != NULL) {
+                xTimerStop(pin_send_timer, 0);
+                pin_send_timer = NULL;
             }
             break;
 
@@ -321,6 +355,12 @@ static int ble_app_gap_event(struct ble_gap_event *event, void *arg)
                 ESP_LOGI(TAG, "Pairing completed successfully!");
                 pairing_confirmed = true;
                 pairing_complete_time = lv_tick_get();
+                
+                // Stop periodic PIN sending
+                if (pin_send_timer != NULL) {
+                    xTimerStop(pin_send_timer, 0);
+                    pin_send_timer = NULL;
+                }
                 
                 // Clean up timeout timer
                 if (pairing_timeout_timer != NULL) {
@@ -351,9 +391,14 @@ static int ble_app_gap_event(struct ble_gap_event *event, void *arg)
                 ESP_LOGI(TAG, "Client subscribed to notifications");
                 client_subscribed = true;
                 
-                // Now that client is subscribed, send the PIN
-                if (connected && pairing_pin > 0) {
+                // Now that client is subscribed, send the PIN immediately
+                if (connected && pairing_pin > 0 && !pairing_confirmed) {
+                    // Give a tiny delay to ensure subscription is fully set up
+                    vTaskDelay(pdMS_TO_TICKS(50));
                     send_pin_now();
+                    pin_send_count++;
+                    ESP_LOGI(TAG, "Sent initial PIN after subscription (count=%d)", pin_send_count);
+                    // Don't stop timer - let it send a few more times to ensure app receives it
                 }
             } else {
                 ESP_LOGI(TAG, "Client unsubscribed from notifications");
