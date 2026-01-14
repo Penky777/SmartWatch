@@ -28,7 +28,6 @@ lv_obj_t *build_detail_screen(const char *date);
 lv_obj_t *build_alerts_screen(void);
 
 
-
 static void switch_screen(lv_obj_t **cache, lv_obj_t *(*builder)(void), const char *name);
 
 // ========== SCREEN CACHE ==========

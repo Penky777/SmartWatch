@@ -72,6 +72,3 @@ lv_obj_t *build_detail_screen(const char *date) {
     return scr;
 }
 
-// ==================== EVENT HANDLERS ====================
-
-

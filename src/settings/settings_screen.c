@@ -47,7 +47,7 @@ static lv_obj_t* create_row(lv_obj_t *parent, const char *title,
 
     // Make row clickable if callback provided
     if (cb) {
-        lv_obj_add_event_cb(row, cb, LV_EVENT_CLICKED, NULL);
+        lv_obj_add_event_cb(row, cb, LV_EVENT_PRESSED, NULL);
     }
 
     return row;
