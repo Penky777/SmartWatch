@@ -112,7 +112,7 @@ void watchface_update_date(const char *date_str)
     }
 }
 
-// Handle right-swipe back to settings
+
 static void swipe_to_alerts_event_cb(lv_event_t *e) {
     lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_get_act());
     if (dir == LV_DIR_RIGHT) {

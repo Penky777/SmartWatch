@@ -28,22 +28,16 @@ static void format_month_year(char *buffer, size_t size, struct tm *date);
 static lv_obj_t* create_date_row(lv_obj_t *parent, const char *date, 
                                   const char *event_text, lv_event_cb_t cb);
 static void date_row_event_cb(lv_event_t *e);
-static void calendar_event_cb(lv_event_t *e);
-static bool detect_swipe_right(swipe_state_t *state);
+
+static void swipe_to_menu_event_cb(lv_event_t *e);
 
 // ==================== SWIPE DETECTION ====================
 
-static bool detect_swipe_right(swipe_state_t *state) {
-    int dx = state->release_point.x - state->press_point.x;
-    int dy = state->release_point.y - state->press_point.y;
-    
-    bool is_right_swipe = (dx > 60) && (abs(dx) > abs(dy) * 1.5);
-    
-    if (is_right_swipe) {
-        ESP_LOGI(TAG, "✓ Swipe right: dx=%d dy=%d", dx, dy);
+static void swipe_to_menu_event_cb(lv_event_t *e) {
+    lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_get_act());
+    if (dir == LV_DIR_RIGHT) {
+        ui_show_menu();
     }
-    
-    return is_right_swipe;
 }
 
 // ==================== HELPER FUNCTIONS ====================
@@ -90,7 +84,7 @@ static lv_obj_t* create_date_row(lv_obj_t *parent, const char *date,
     lv_obj_set_style_text_font(event_lbl, &lv_font_montserrat_18, 0);
 
     if (cb) {
-        lv_obj_add_event_cb(row, cb, LV_EVENT_CLICKED, (void*)date);
+        lv_obj_add_event_cb(row, cb, LV_EVENT_LONG_PRESSED, (void*)date);
     }
 
     return row;
@@ -109,10 +103,6 @@ lv_obj_t *build_calendar_screen(void) {
     // Enable scrolling
     lv_obj_set_scroll_dir(scr, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(scr, LV_SCROLLBAR_MODE_OFF);
-    
-    // Register swipe events
-    lv_obj_add_event_cb(scr, calendar_event_cb, LV_EVENT_PRESSED, NULL);
-    lv_obj_add_event_cb(scr, calendar_event_cb, LV_EVENT_RELEASED, NULL);
 
     // Layout
     lv_obj_set_flex_flow(scr, LV_FLEX_FLOW_COLUMN);
@@ -121,6 +111,8 @@ lv_obj_t *build_calendar_screen(void) {
     lv_obj_set_style_pad_row(scr, 12, 0);
     lv_obj_set_style_pad_top(scr, 20, 0);
     lv_obj_set_style_pad_bottom(scr, 20, 0);
+
+    lv_obj_add_event(scr,swipe_to_menu_event_cb,LV_EVENT_GESTURE,NULL);
 
     // Get current date
     struct tm current_time;
@@ -181,36 +173,6 @@ lv_obj_t *build_calendar_screen(void) {
     return scr;
 }
 
-// ==================== EVENT HANDLERS ====================
-
-static void calendar_event_cb(lv_event_t *e) {
-    lv_event_code_t code = lv_event_get_code(e);
-    
-    if (code == LV_EVENT_PRESSED) {
-        lv_indev_t *indev = lv_indev_get_act();
-        if (indev) {
-            lv_indev_get_point(indev, &calendar_swipe.press_point);
-            calendar_swipe.pressed = true;
-        }
-    }
-    else if (code == LV_EVENT_RELEASED) {
-        lv_indev_t *indev = lv_indev_get_act();
-        if (indev && calendar_swipe.pressed) {
-            lv_indev_get_point(indev, &calendar_swipe.release_point);
-            calendar_swipe.pressed = false;
-            
-            if (detect_swipe_right(&calendar_swipe)) {
-                ESP_LOGI(TAG, "Swipe → Going back");
-                
-                if (ui_can_go_back()) {
-                    ui_go_back();
-                } else {
-                    ui_show_menu();
-                }
-            }
-        }
-    }
-}
 
 static void date_row_event_cb(lv_event_t *e) {
     const char *date = (const char*)lv_event_get_user_data(e);
