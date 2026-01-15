@@ -334,6 +334,10 @@ static void clock_task(void *arg) {
     
     ESP_LOGI(TAG, "Clock task started");
     
+    // Day of week names
+    const char *day_names[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+    const char *month_names[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+    
     while (1) {
         struct tm now;
         if (bsp_pcf85063_get_time(&now)) {
@@ -341,9 +345,17 @@ static void clock_task(void *arg) {
             snprintf(buf, sizeof(buf), "%02d:%02d:%02d", 
                      now.tm_hour, now.tm_min, now.tm_sec);
             
+            // Format date: "Thu, Jan 15"
+            char date_buf[32];
+            snprintf(date_buf, sizeof(date_buf), "%s, %s %d", 
+                     day_names[now.tm_wday], 
+                     month_names[now.tm_mon], 
+                     now.tm_mday);
+            
             gui_lock();
             // Update both watchface and time screen
             watchface_update_time(buf);
+            watchface_update_date(date_buf);
             time_screen_update(buf);
             gui_unlock();
         }
