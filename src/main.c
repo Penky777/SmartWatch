@@ -37,9 +37,6 @@
 #include "./Watchface/watchface_screen.h"
 #include "./alerts_screen.h"
 
-// ============================================================================
-// PIN CONFIGURATION
-// ============================================================================
 #define LCD_SCLK_GPIO   1
 #define LCD_MOSI_GPIO   2
 #define LCD_DC_GPIO     3
@@ -53,7 +50,7 @@
 #define LCD_WIDTH           240
 #define LCD_HEIGHT          280
 #define LV_TICK_PERIOD_MS   2
-#define BUFFER_ROWS         20  // Reduced from 40 to save memory
+#define BUFFER_ROWS         20  // Reduced from 20 to save memory
 
 #define I2C_PORT            I2C_NUM_0
 #define CST816_I2C_ADDR     0x15
@@ -69,9 +66,7 @@
 #define HEAP_CHECK_INTERVAL_MS  2000
 #define CLOCK_UPDATE_MS         1000
 
-// ============================================================================
 // GLOBAL VARIABLES
-// ============================================================================
 static const char *TAG = "SMARTWATCH";
 static esp_lcd_panel_handle_t g_panel = NULL;
 static i2c_master_bus_handle_t g_i2c_bus = NULL;
@@ -94,9 +89,9 @@ typedef struct {
 
 static volatile touch_sample_t s_last_touch = {false, 0, 0};
 
-// ============================================================================
+RTC_DATA_ATTR static uint32_t g_boot_count = 0;
+
 // HEAP MONITORING
-// ============================================================================
 typedef struct {
     size_t free_heap;
     size_t free_internal;
@@ -122,13 +117,12 @@ static void log_heap_stats(const char *context) {
              (unsigned)stats.largest_block,
              (unsigned)stats.min_free_ever);
     
-    // Warn if fragmentation is severe
+    
     if (stats.largest_block < stats.free_internal / 2) {
         ESP_LOGW("HEAP", "Fragmentation detected! Largest block only %u of %u free",
                  (unsigned)stats.largest_block, (unsigned)stats.free_internal);
     }
     
-    // Critical warning
     if (stats.free_internal < 30000) {
         ESP_LOGE("HEAP", "CRITICAL: Only %u bytes internal RAM remaining!",
                  (unsigned)stats.free_internal);
@@ -143,9 +137,8 @@ static bool check_heap_integrity(const char *context) {
     return ok;
 }
 
-// ============================================================================
+
 // BACKLIGHT CONTROL
-// ============================================================================
 static void backlight_init(void) {
     ledc_timer_config_t timer = {
         .speed_mode = LEDC_LOW_SPEED_MODE,
@@ -174,9 +167,7 @@ void backlight_set(uint8_t percent) {
     ESP_ERROR_CHECK(ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0));
 }
 
-// ============================================================================
 // GUI LOCK
-// ============================================================================
 void gui_lock(void) {
     if (gui_mutex) {
         xSemaphoreTake(gui_mutex, portMAX_DELAY);
@@ -189,9 +180,7 @@ void gui_unlock(void) {
     }
 }
 
-// ============================================================================
 // LIGHT SLEEP
-// ============================================================================
 static void enter_light_sleep(void) {
     ESP_LOGI(TAG, "Entering light sleep...");
     
@@ -218,9 +207,8 @@ static void enter_light_sleep(void) {
     g_last_activity_ms = lv_tick_get();
 }
 
-// ============================================================================
 // LVGL CALLBACKS
-// ============================================================================
+
 static void lvgl_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
     int x1 = area->x1;
     int y1 = area->y1;
@@ -259,9 +247,7 @@ static void lvgl_touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
     }
 }
 
-// ============================================================================
 // I2C & TOUCH INITIALIZATION
-// ============================================================================
 static esp_err_t i2c_bus_init(void) {
     i2c_master_bus_config_t cfg = {
         .i2c_port = I2C_PORT,
@@ -309,9 +295,7 @@ static esp_err_t cst816_read_sample(touch_sample_t *out) {
     return ESP_OK;
 }
 
-// ============================================================================
 // TOUCH INTERRUPT
-// ============================================================================
 static void IRAM_ATTR touch_isr(void *arg) {
     (void)arg;
     s_touch_irq_flag = true;
@@ -326,9 +310,7 @@ static void IRAM_ATTR touch_isr(void *arg) {
     }
 }
 
-// ============================================================================
 // FREERTOS TASKS
-// ============================================================================
 static void clock_task(void *arg) {
     (void)arg;
     
@@ -423,7 +405,7 @@ static void monitor_task(void *arg) {
             last_check = now;
         }
         
-        // ✅ Auto-sleep with power management
+        // Auto-sleep with power management
         if (!bsp_pwr_is_screen_sleeping() &&      // Not already sleeping
             g_backlight_on &&                      // Backlight is on
             now - g_last_activity_ms > SCREEN_TIMEOUT_MS) {
@@ -436,9 +418,8 @@ static void monitor_task(void *arg) {
     }
 }
 
-// ============================================================================
+
 // LCD INITIALIZATION
-// ============================================================================
 static esp_err_t lcd_init(void) {
     ESP_LOGI(TAG, "Initializing LCD...");
     
@@ -483,9 +464,7 @@ static esp_err_t lcd_init(void) {
     return ESP_OK;
 }
 
-// ============================================================================
 // LVGL INITIALIZATION
-// ============================================================================
 static esp_err_t lvgl_init(void) {
     ESP_LOGI(TAG, "Initializing LVGL...");
     log_heap_stats("before LVGL init");
@@ -548,59 +527,53 @@ static esp_err_t lvgl_init(void) {
 // MAIN APPLICATION
 // ============================================================================
 void app_main(void) {
-    printf("\n\n========================================\n");
-    printf("SMARTWATCH FIRMWARE STARTING\n");
-    printf("========================================\n\n");
-
-    ESP_LOGI("MAIN", "========================================");
-    ESP_LOGI("MAIN", "         SMARTWATCH BOOT START         ");
-    ESP_LOGI("MAIN", "========================================");
+    printf("\n");
+    printf("╔════════════════════════════════════════╗\n");
+    printf("║   ESP32-C6 SMARTWATCH FIRMWARE v2.0   ║\n");
+    printf("╚════════════════════════════════════════╝\n");
+    printf("\n");
     
-    // Check for crash on previous boot
+    g_boot_count++;
+    
+    // ========== CHECK BOOT REASON ==========
+    
     esp_reset_reason_t reset_reason = esp_reset_reason();
-    const char *reason_str;
+    const char *reason_str = "Unknown";
     
-    switch(reset_reason) {
-        case ESP_RST_UNKNOWN:   reason_str = "Unknown"; break;
+    switch (reset_reason) {
         case ESP_RST_POWERON:   reason_str = "Power on"; break;
         case ESP_RST_SW:        reason_str = "Software reset"; break;
         case ESP_RST_PANIC:     reason_str = "⚠️ PANIC/CRASH"; break;
         case ESP_RST_INT_WDT:   reason_str = "⚠️ WATCHDOG"; break;
         case ESP_RST_TASK_WDT:  reason_str = "⚠️ TASK WATCHDOG"; break;
-        case ESP_RST_WDT:       reason_str = "⚠️ OTHER WATCHDOG"; break;
-        case ESP_RST_DEEPSLEEP: reason_str = "Deep sleep"; break;
+        case ESP_RST_DEEPSLEEP: reason_str = "Deep sleep wake"; break;
         case ESP_RST_BROWNOUT:  reason_str = "⚠️ BROWNOUT"; break;
-        default:                reason_str = "Other"; break;
+        default: break;
     }
     
     ESP_LOGI("MAIN", "Reset reason: %s (%d)", reason_str, reset_reason);
+    ESP_LOGI("MAIN", "Boot count: %lu", g_boot_count);
     
+    // Check for crash
     if (reset_reason == ESP_RST_PANIC || 
         reset_reason == ESP_RST_INT_WDT || 
         reset_reason == ESP_RST_TASK_WDT) {
         ESP_LOGE("MAIN", "");
         ESP_LOGE("MAIN", "╔════════════════════════════════════╗");
         ESP_LOGE("MAIN", "║  CRASHED ON PREVIOUS BOOT!        ║");
-        ESP_LOGE("MAIN", "║  Check logs above for details     ║");
         ESP_LOGE("MAIN", "╚════════════════════════════════════╝");
         ESP_LOGE("MAIN", "");
-        vTaskDelay(pdMS_TO_TICKS(3000));  // Pause to see message
+        vTaskDelay(pdMS_TO_TICKS(3000));
     }
     
-    ESP_LOGI("MAIN", "Free heap: %u bytes", esp_get_free_heap_size());
-    
-    // Check wakeup cause
-    esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
-    switch (cause) {
-        case ESP_SLEEP_WAKEUP_EXT0:
-            ESP_LOGI(TAG, "Woke from EXT0 (touch)");
-            break;
-        case ESP_SLEEP_WAKEUP_EXT1:
-            ESP_LOGI(TAG, "Woke from EXT1");
-            break;
-        default:
-            ESP_LOGI(TAG, "Power-on or reset");
-            break;
+    // Check if waking from deep sleep
+    if (bsp_pwr_is_deep_sleep_wake()) {
+        ESP_LOGI("MAIN", "");
+        ESP_LOGI("MAIN", "╔════════════════════════════════════╗");
+        ESP_LOGI("MAIN", "║  WAKING FROM DEEP SLEEP            ║");
+        ESP_LOGI("MAIN", "╚════════════════════════════════════╝");
+        ESP_LOGI("MAIN", "");
+        bsp_pwr_log_wakeup_reason();
     }
     
     log_heap_stats("boot");
@@ -735,12 +708,10 @@ if (max_err != ESP_OK) {
 
     
     while (1) {
-         pwr_event_t pwr_event = bsp_pwr_get_event();
-
-         
+        pwr_event_t pwr_event = bsp_pwr_get_event();
     
     if (pwr_event != PWR_EVENT_NONE) {
-        gui_lock();  
+        gui_lock();
         
         switch (pwr_event) {
             case PWR_EVENT_WAKE:
@@ -749,26 +720,33 @@ if (max_err != ESP_OK) {
                 
             case PWR_EVENT_GO_BACK:
                 if (ui_can_go_back()) {
-                    ESP_LOGI(TAG, "→ Going back to previous screen");
+                    ESP_LOGI(TAG, "→ Going back");
                     ui_go_back();
                     g_last_activity_ms = lv_tick_get();
                 } else {
-                    ESP_LOGI(TAG, "→ On main screen, going to sleep");
+                    ESP_LOGI(TAG, "→ On main screen, sleeping");
                     bsp_pwr_sleep_screen();
                 }
+                break;
+            
+            // ✅ NEW: Handle deep sleep request
+            case PWR_EVENT_DEEP_SLEEP:
+                ESP_LOGW(TAG, "Deep sleep requested");
+                gui_unlock();  // Unlock before sleep
+                bsp_pwr_deep_sleep(8 * 3600);  // 8 hours max
+                // Never returns - resets to app_main()
                 break;
                 
             case PWR_EVENT_SHUTDOWN:
                 ESP_LOGW(TAG, "Shutting down...");
                 backlight_set(0);
                 vTaskDelay(pdMS_TO_TICKS(200));
-                gpio_set_level(BAT_EN_PIN, 0);  // Cut power
+                gpio_set_level(BAT_EN_PIN, 0);
                 break;
                 
             default:
                 break;
         }
-        
         gui_unlock();
     }
     

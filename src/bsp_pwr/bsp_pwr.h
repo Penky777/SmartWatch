@@ -7,19 +7,24 @@
 #define BAT_EN_PIN      15
 #define PWR_KEY_PIN     18
 
-// ✅ ADD: Event types enum
 typedef enum {
     PWR_EVENT_NONE,
     PWR_EVENT_WAKE,
     PWR_EVENT_SLEEP,
     PWR_EVENT_GO_BACK,
-    PWR_EVENT_SHUTDOWN
+    PWR_EVENT_SHUTDOWN,
+    PWR_EVENT_DEEP_SLEEP
 } pwr_event_t;
 
 void bsp_pwr_init(void);
 bool bsp_pwr_is_screen_sleeping(void);
 void bsp_pwr_wake_screen(void);
 void bsp_pwr_sleep_screen(void);
+
+void bsp_pwr_deep_sleep(uint32_t sleep_time_sec);
+bool bsp_pwr_is_deep_sleep_wake(void);
+void bsp_pwr_log_wakeup_reason(void);
+void bsp_pwr_handle_deep_sleep_wake(void);
 
 pwr_event_t bsp_pwr_get_event(void);
 
