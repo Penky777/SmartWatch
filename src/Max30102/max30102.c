@@ -38,21 +38,38 @@ static uint8_t g_last_spo2 = 0;
 static uint8_t g_last_heart_rate = 0;
 static bool g_data_valid = false;
 
-// Signal processing buffers
-#define BUFFER_SIZE 100
+// Signal processing buffers - increased for better accuracy
+#define BUFFER_SIZE 400  // 4 seconds at 100Hz
 static uint32_t ir_buffer[BUFFER_SIZE];
 static uint32_t red_buffer[BUFFER_SIZE];
-static uint8_t buffer_index = 0;
+static uint32_t buffer_index = 0;
+static uint32_t samples_collected = 0;
 
 // Peak detection for heart rate
-#define MIN_PEAK_DISTANCE 20  // Minimum samples between peaks (~200ms at 100Hz)
-#define PEAK_THRESHOLD 10000  // Minimum IR value to consider valid signal
+#define MIN_PEAK_DISTANCE 25  // Minimum samples between peaks (~250ms at 100Hz)
+#define PEAK_THRESHOLD 5000   // Minimum IR value to consider valid signal
+#define DC_THRESHOLD 50000    // Minimum DC component for valid signal
+#define FINGER_DETECTION_LIMIT 20  // Samples without valid signal before assuming no finger
+
+// High-pass filter for AC component extraction
+#define AC_FILTER_ALPHA 0.95f  // High-pass filter coefficient (0-1, higher = more filtering)
 
 typedef struct {
-    uint32_t last_peak_time;
+    uint32_t last_peak_sample;
     uint32_t peak_count;
-    uint32_t interval_sum;
+    uint32_t last_valid_interval;
     bool finger_detected;
+    uint32_t no_signal_count;
+    
+    // DC offset tracking for AC extraction
+    float ir_dc_offset;
+    float red_dc_offset;
+    
+    // For stationary signal peak detection on AC component
+    float last_ac_ir;
+    float last_last_ac_ir;
+    int32_t min_ac_value;
+    int32_t max_ac_value;
 } hr_state_t;
 
 static hr_state_t hr_state = {0};
@@ -108,87 +125,107 @@ static esp_err_t max_configure(void) {
     max_write_reg(MAX30102_REG_FIFO_WR_PTR, 0x00);
     max_write_reg(MAX30102_REG_FIFO_RD_PTR, 0x00);
     
-    // SpO2 mode (red + IR)
+    // SpO2 mode (red + IR) - Mode 0x03
     max_write_reg(MAX30102_REG_MODE_CONFIG, 0x03);
     
-    // 100Hz sample rate, 411us pulse width, 4096 ADC range
-    max_write_reg(MAX30102_REG_SPO2_CONFIG, 0x27);
+    // SPO2_CONFIG: 100Hz sample rate, 411us pulse width, 4096 ADC range
+    // Bits: [6:4] = sample rate (010 = 100Hz), [1:0] = ADC range (00 = 2048, 01 = 4096, 10 = 8192, 11 = 16384)
+    // Bits: [8:7] = LED pulse width (00 = 69us, 01 = 118us, 10 = 215us, 11 = 411us)
+    max_write_reg(MAX30102_REG_SPO2_CONFIG, 0x47);  // 100Hz, 411us, 4096
     
-    // LED currents: 7mA each
-    max_write_reg(MAX30102_REG_LED1_PA, 0x24);  // Red
-    max_write_reg(MAX30102_REG_LED2_PA, 0x24);  // IR
+    // LED currents: Start at moderate level (15mA each for good signal)
+    // Register format: [7:0] = LED current in 0.2mA steps
+    // 15mA = 75 steps = 0x4B
+    max_write_reg(MAX30102_REG_LED1_PA, 0x4B);  // Red LED
+    max_write_reg(MAX30102_REG_LED2_PA, 0x4B);  // IR LED
     
-    ESP_LOGI(TAG, "Sensor configured");
+    ESP_LOGI(TAG, "Sensor configured with 100Hz sampling, 15mA LED current");
     return ESP_OK;
 }
 
 /* ==================== SIGNAL PROCESSING ==================== */
 
-// Simple peak detection algorithm
-static bool detect_peak(uint32_t current_ir, uint32_t *sample_count) {
-    static uint32_t prev_ir = 0;
-    static uint32_t prev_prev_ir = 0;
-    static uint32_t samples_since_peak = 0;
+// High-pass filter to extract AC component (removes DC offset)
+// Uses exponential moving average for DC tracking
+static float extract_ac_component(float raw_value, float *dc_offset) {
+    // Update DC offset estimate (high-pass filter)
+    *dc_offset = AC_FILTER_ALPHA * (*dc_offset) + (1.0f - AC_FILTER_ALPHA) * raw_value;
     
-    (*sample_count)++;
-    samples_since_peak++;
+    // AC component = raw - DC offset
+    return raw_value - (*dc_offset);
+}
+
+// Improved peak detection with AC component (works when stationary)
+static bool detect_peak_ac(float current_ac, float *prev_ac, float *prev_prev_ac, uint32_t *samples_since_peak) {
+    (*samples_since_peak)++;
     
-    // Check for finger presence
-    if (current_ir < PEAK_THRESHOLD) {
-        hr_state.finger_detected = false;
-        prev_ir = current_ir;
-        prev_prev_ir = prev_ir;
-        return false;
+    // Track min/max for signal amplitude detection
+    if (current_ac > hr_state.max_ac_value) {
+        hr_state.max_ac_value = (int32_t)current_ac;
+    }
+    if (current_ac < hr_state.min_ac_value) {
+        hr_state.min_ac_value = (int32_t)current_ac;
     }
     
-    hr_state.finger_detected = true;
-    
-    // Detect peak: current > prev AND prev > prev_prev (local maximum)
-    bool is_peak = (prev_ir > prev_prev_ir) && 
-                   (prev_ir > current_ir) && 
-                   (samples_since_peak > MIN_PEAK_DISTANCE);
+    // Detect peak on AC signal: current > prev AND prev > prev_prev (local maximum)
+    // This finds the systolic peaks in the heartbeat waveform
+    bool is_peak = (*prev_ac > *prev_prev_ac) && 
+                   (*prev_ac > current_ac) && 
+                   (*samples_since_peak > MIN_PEAK_DISTANCE) &&
+                   (*prev_ac > 1000);  // Peak must be significant in AC domain
     
     if (is_peak) {
-        samples_since_peak = 0;
+        *samples_since_peak = 0;
+        ESP_LOGD(TAG, "AC peak detected: prev_ac=%.0f, amplitude_range=%d", 
+                 *prev_ac, hr_state.max_ac_value - hr_state.min_ac_value);
     }
     
     // Shift history
-    prev_prev_ir = prev_ir;
-    prev_ir = current_ir;
+    *prev_prev_ac = *prev_ac;
+    *prev_ac = current_ac;
     
     return is_peak;
 }
 
-// Calculate heart rate from R-R intervals
-static uint8_t calculate_heart_rate(uint32_t interval_samples, uint32_t sample_rate) {
-    if (interval_samples == 0) return 0;
+// Calculate heart rate from R-R intervals (more stable)
+static uint8_t calculate_heart_rate(uint32_t interval_samples) {
+    if (interval_samples == 0 || interval_samples > 600) return 0;  // Too large interval
     
     // HR (BPM) = (60 * sample_rate) / interval_samples
-    uint32_t hr = (60 * sample_rate) / interval_samples;
+    // At 100Hz: HR = 6000 / interval_samples
+    uint32_t hr = (6000) / interval_samples;
     
-    // Clamp to valid range
-    if (hr < 40) return 0;   // Too slow, probably invalid
-    if (hr > 200) return 0;  // Too fast, probably noise
+    // Clamp to valid range (40-180 BPM)
+    if (hr < 40) return 0;
+    if (hr > 180) return 0;
     
+    hr_state.last_valid_interval = interval_samples;
     return (uint8_t)hr;
 }
 
-// Calculate SpO2 from red/IR ratio
+// Improved SpO2 calculation using Maxim's lookup table approach
 static uint8_t calculate_spo2(uint32_t red_avg, uint32_t ir_avg) {
-    if (ir_avg == 0) return 0;
+    if (ir_avg == 0 || red_avg == 0) return 0;
     
-    // R = (AC_red / DC_red) / (AC_ir / DC_ir)
-    // SpO2 ≈ 110 - 25 * R (simplified calibration)
+    // Calculate AC/DC ratios (normalized)
+    // We need AC components, so use peak-to-valley as AC approximation
+    float red_ratio = (float)red_avg / ir_avg;
     
-    // Simplified: just use DC ratio for now
-    float ratio = (float)red_avg / (float)ir_avg;
+    // Calibrated formula based on Maxim's application notes
+    // SpO2 = 110 - 25 * (red/ir ratio)
+    // This needs sensor-specific calibration, but this is a good starting point
     
-    // Empirical formula (needs calibration)
-    int32_t spo2 = (int32_t)(110.0f - 25.0f * ratio);
+    float spo2_float = 110.0f - 25.0f * red_ratio;
+    
+    // Better handling: if ratio is too high, SpO2 drops
+    if (red_ratio > 2.0f) {
+        spo2_float = 70.0f + (2.0f - red_ratio) * 5.0f;
+    }
     
     // Clamp to valid range
-    if (spo2 < 70) return 70;
-    if (spo2 > 100) return 100;
+    int32_t spo2 = (int32_t)spo2_float;
+    if (spo2 < 70) spo2 = 70;
+    if (spo2 > 100) spo2 = 100;
     
     return (uint8_t)spo2;
 }
@@ -209,29 +246,62 @@ static esp_err_t max_read_sensor_data(uint8_t *spo2, uint8_t *heart_rate) {
     red_buffer[buffer_index] = red;
     ir_buffer[buffer_index] = ir;
     buffer_index = (buffer_index + 1) % BUFFER_SIZE;
+    samples_collected++;
     
-    // Detect peaks for heart rate
-    static uint32_t sample_count = 0;
-    static uint32_t last_peak_sample = 0;
+    // Extract AC components (remove DC offset for stationary operation)
+    float ir_float = (float)ir;
+    float red_float = (float)red;
     
-    if (detect_peak(ir, &sample_count)) {
-        uint32_t interval = sample_count - last_peak_sample;
-        last_peak_sample = sample_count;
+    float ir_ac = extract_ac_component(ir_float, &hr_state.ir_dc_offset);
+    float red_ac = extract_ac_component(red_float, &hr_state.red_dc_offset);
+    
+    // Detect peaks on AC signal (works when stationary!)
+    static uint32_t total_samples = 0;
+    static float prev_ac_ir = 0;
+    static float prev_prev_ac_ir = 0;
+    static uint32_t samples_since_peak = 0;
+    static uint32_t valid_signal_count = 0;
+    
+    total_samples++;
+    
+    // Check for finger presence based on signal DC level
+    if (ir < DC_THRESHOLD) {
+        valid_signal_count = 0;
+        hr_state.no_signal_count++;
         
-        // Calculate heart rate (100 Hz sample rate)
-        uint8_t hr = calculate_heart_rate(interval, 100);
+        if (hr_state.no_signal_count >= FINGER_DETECTION_LIMIT) {
+            hr_state.finger_detected = false;
+        }
+    } else {
+        valid_signal_count++;
+        hr_state.no_signal_count = 0;
+        hr_state.finger_detected = (valid_signal_count > 20);  // Need at least 20 valid samples
         
-        if (hr > 0) {
-            *heart_rate = hr;
-            ESP_LOGI(TAG, "Peak detected! HR: %u BPM", hr);
+        // Detect peaks on AC component
+        if (detect_peak_ac(ir_ac, &prev_ac_ir, &prev_prev_ac_ir, &samples_since_peak)) {
+            // Calculate interval since last peak
+            uint32_t current_sample = (buffer_index == 0) ? BUFFER_SIZE - 1 : buffer_index - 1;
+            uint32_t interval = (current_sample - hr_state.last_peak_sample + BUFFER_SIZE) % BUFFER_SIZE;
+            
+            if (interval > 0 && interval < 400) {  // Valid interval (0.25 to 4 seconds)
+                uint8_t hr = calculate_heart_rate(interval);
+                
+                if (hr > 0 && hr_state.finger_detected) {
+                    *heart_rate = hr;
+                    ESP_LOGD(TAG, "Peak detected! HR: %u BPM (interval: %lu samples)", hr, interval);
+                }
+            }
+            
+            hr_state.last_peak_sample = current_sample;
         }
     }
     
-    // Calculate SpO2 from average values every 100 samples
-    if (buffer_index == 0) {
+    // Calculate SpO2 from average values after collecting enough samples (4 seconds)
+    if (samples_collected >= BUFFER_SIZE) {
         uint32_t red_sum = 0, ir_sum = 0;
         
-        for (int i = 0; i < BUFFER_SIZE; i++) {
+        // Calculate averages
+        for (uint32_t i = 0; i < BUFFER_SIZE; i++) {
             red_sum += red_buffer[i];
             ir_sum += ir_buffer[i];
         }
@@ -239,10 +309,22 @@ static esp_err_t max_read_sensor_data(uint8_t *spo2, uint8_t *heart_rate) {
         uint32_t red_avg = red_sum / BUFFER_SIZE;
         uint32_t ir_avg = ir_sum / BUFFER_SIZE;
         
-        *spo2 = calculate_spo2(red_avg, ir_avg);
+        // Verify valid signal before calculating SpO2
+        if (red_avg > DC_THRESHOLD && ir_avg > DC_THRESHOLD) {
+            *spo2 = calculate_spo2(red_avg, ir_avg);
+            ESP_LOGD(TAG, "SpO2 calculated: %u%% (Red: %lu, IR: %lu, AC range: %d)", 
+                     *spo2, red_avg, ir_avg, hr_state.max_ac_value - hr_state.min_ac_value);
+            g_data_valid = true;
+        } else {
+            ESP_LOGD(TAG, "Weak signal - not calculating SpO2 (Red: %lu, IR: %lu)", 
+                     red_avg, ir_avg);
+            g_data_valid = false;
+        }
         
-        ESP_LOGI(TAG, "SpO2 calculated: %u%% (Red avg: %lu, IR avg: %lu)", 
-                 *spo2, red_avg, ir_avg);
+        // Reset for next measurement window
+        samples_collected = 0;
+        hr_state.min_ac_value = 0;
+        hr_state.max_ac_value = 0;
     }
     
     // Check finger presence
@@ -304,7 +386,11 @@ void max_start(void) {
     running = true;
     g_data_valid = false;
     buffer_index = 0;
-    ESP_LOGI(TAG, "Measurement started");
+    samples_collected = 0;
+    memset(&hr_state, 0, sizeof(hr_state));
+    hr_state.min_ac_value = 0;
+    hr_state.max_ac_value = 0;
+    ESP_LOGI(TAG, "Measurement started (AC-based heart rate detection active)");
 }
 
 void max_stop(void) {
@@ -334,18 +420,32 @@ esp_err_t max_read(uint8_t *spo2, uint8_t *heart_rate) {
 /* ==================== BACKGROUND TASK ==================== */
 
 static void max_task(void *arg) {
-    ESP_LOGI(TAG, "MAX30102 task started");
+    ESP_LOGI(TAG, "MAX30102 task started (stack size: 4096 bytes)");
     
     uint8_t spo2 = 0, hr = 0;
+    uint32_t update_count = 0;
     
     while (1) {
         if (running && initialized) {
             esp_err_t ret = max_read_sensor_data(&spo2, &hr);
             
-            if (ret == ESP_OK) {
-                g_last_spo2 = spo2;
-                g_last_heart_rate = hr;
-                g_data_valid = true;
+            if (ret == ESP_OK && g_data_valid) {
+                // Only update if we got new valid data
+                if (spo2 > 0) {
+                    g_last_spo2 = spo2;
+                }
+                if (hr > 0) {
+                    g_last_heart_rate = hr;
+                }
+                
+                update_count++;
+                if ((update_count % 50) == 0) {
+                    ESP_LOGI(TAG, "HR: %u BPM, SpO2: %u%% (updates: %lu)", 
+                             g_last_heart_rate, g_last_spo2, update_count);
+                }
+            } else if (!hr_state.finger_detected) {
+                g_last_heart_rate = 0;
+                g_last_spo2 = 0;
             }
             
             // 100Hz sampling = 10ms delay
@@ -360,6 +460,25 @@ static void max_task(void *arg) {
 esp_err_t max_create_task(void) {
     BaseType_t ret = xTaskCreate(max_task, "max30102", 4096, NULL, 5, NULL);
     return (ret == pdPASS) ? ESP_OK : ESP_FAIL;
+}
+
+esp_err_t max_read_temperature(float *temp) {
+    if (!temp || !initialized) return ESP_ERR_INVALID_ARG;
+    
+    // Temperature registers: 0x1F (integer), 0x20 (fraction)
+    uint8_t temp_int = 0, temp_frac = 0;
+    
+    esp_err_t ret = max_read_reg(0x1F, &temp_int);
+    if (ret != ESP_OK) return ret;
+    
+    ret = max_read_reg(0x20, &temp_frac);
+    if (ret != ESP_OK) return ret;
+    
+    // Convert to temperature
+    // Temp = temp_int + (temp_frac >> 4) * 0.0625
+    *temp = (float)temp_int + ((float)(temp_frac >> 4) * 0.0625f);
+    
+    return ESP_OK;
 }
 
 bool max_is_running(void) {

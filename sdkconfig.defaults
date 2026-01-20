@@ -1,0 +1,2 @@
+# Ensures the main task has enough stack for LVGL alert scrolling
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
