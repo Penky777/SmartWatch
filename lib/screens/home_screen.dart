@@ -1,14 +1,46 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+
+import '../di.dart';
+import '../ble/ble_repository.dart';
 import '../widgets/screen_scafold.dart';
 import '../widgets/section_card.dart';
 import '../router.dart';
 import '../test_ids.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
   @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  late final BleRepository _repo;
+  StreamSubscription<HealthData?>? _healthSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _repo = getIt<BleRepository>();
+
+    // Počúvaj health data stream
+    _healthSub = _repo.healthDataStream.listen((_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _healthSub?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final h = _repo.healthData;
+
     final items = [
       _HomeItem(Icons.directions_run, "Aktivita", AppRoutes.activity, TKeys.tileActivity),
       _HomeItem(Icons.favorite, "Zdravie", AppRoutes.health, TKeys.tileHealth),
@@ -20,6 +52,10 @@ class HomeScreen extends StatelessWidget {
       _HomeItem(Icons.bluetooth, "Bluetooth", AppRoutes.ble, TKeys.tileBluetooth),
     ];
 
+    // Formátovanie hodnôt z hodiniek
+    final stepsValue = h.steps > 0 ? "${h.steps}" : "—";
+    final heartRateValue = h.heartRate > 0 ? "${h.heartRate} bpm" : "— bpm";
+    final spo2Value = h.spo2 > 0 ? "${h.spo2}%" : "—%";
 
     return ScreenScaffold(
       title: "SmartWatch",
@@ -41,7 +77,7 @@ class HomeScreen extends StatelessWidget {
                     crossAxisCount: cols,
                     mainAxisSpacing: 12,
                     crossAxisSpacing: 12,
-                    childAspectRatio: 0.74, // trošku vyššie dlaždice
+                    childAspectRatio: 0.74,
                   ),
                   itemBuilder: (_, i) => _HomeTile(item: items[i]),
                 );
@@ -52,12 +88,32 @@ class HomeScreen extends StatelessWidget {
           SectionCard(
             title: "Dnešné zhrnutie",
             child: Row(
-              children: const [
-                Expanded(child: _SummaryTile(icon: Icons.directions_walk, label: "Kroky", value: "8 240")),
-                SizedBox(width: 12),
-                Expanded(child: _SummaryTile(icon: Icons.favorite, label: "Tep", value: "72 bpm")),
-                SizedBox(width: 12),
-                Expanded(child: _SummaryTile(icon: Icons.nightlight, label: "Spánok", value: "7h 25m")),
+              children: [
+                Expanded(
+                  child: _SummaryTile(
+                    key: TKeys.summarySteps,
+                    icon: Icons.directions_walk,
+                    label: "Kroky",
+                    value: stepsValue,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _SummaryTile(
+                    key: TKeys.summaryHeart,
+                    icon: Icons.favorite,
+                    label: "Tep",
+                    value: heartRateValue,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _SummaryTile(
+                    icon: Icons.health_and_safety,
+                    label: "SpO₂",
+                    value: spo2Value,
+                  ),
+                ),
               ],
             ),
           ),
@@ -79,7 +135,6 @@ class _HomeTile extends StatelessWidget {
   final _HomeItem item;
   const _HomeTile({required this.item});
 
-
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -91,9 +146,7 @@ class _HomeTile extends StatelessWidget {
         decoration: BoxDecoration(
           color: cs.surface,
           borderRadius: BorderRadius.circular(16),
-          // border: Border.all(...),  // odstránené
           boxShadow: [
-            // jemný „glow“ namiesto rámčeka (voliteľné)
             BoxShadow(
               color: Colors.black.withOpacity(0.15),
               blurRadius: 10,
@@ -112,8 +165,7 @@ class _HomeTile extends StatelessWidget {
               width: 44,
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(12),
-                // border: Border.all(...), // odstránené
-                color: cs.primary.withOpacity(0.08), // jemné pozadie ikony (voliteľné)
+                color: cs.primary.withOpacity(0.08),
               ),
               alignment: Alignment.center,
               child: Icon(item.icon, size: 20),
@@ -141,7 +193,7 @@ class _SummaryTile extends StatelessWidget {
   final IconData icon;
   final String label;
   final String value;
-  const _SummaryTile({required this.icon, required this.label, required this.value});
+  const _SummaryTile({super.key, required this.icon, required this.label, required this.value});
 
   @override
   Widget build(BuildContext context) {
@@ -174,5 +226,4 @@ class _SummaryTile extends StatelessWidget {
       ),
     );
   }
-
 }

@@ -9,32 +9,18 @@ import '../test_ids.dart';
 class WeatherScreen extends StatefulWidget {
   const WeatherScreen({super.key});
 
-
   @override
   State<WeatherScreen> createState() => _WeatherScreenState();
 }
 
 class _WeatherScreenState extends State<WeatherScreen> {
   static const String openWeatherApiKey = '4eb6b61902804474c296d86e4d165b0b';
-  // sem daj svoj API key z OpenWeatherMap
   final _weatherService = WeatherService(openWeatherApiKey);
 
   Weather? _weather;
+  List<HourlyForecast> _hourly = [];
   bool _loading = false;
   String? _error;
-
-  // malý názov metódy (konvencia)
-  Widget _hourBox({required String h, required String t}) {
-    return Column(
-      children: [
-        Text(h, style: const TextStyle(fontWeight: FontWeight.w600)),
-        const SizedBox(height: 6),
-        const Icon(Icons.cloud_queue, size: 20),
-        const SizedBox(height: 6),
-        Text(t),
-      ],
-    );
-  }
 
   @override
   void initState() {
@@ -49,18 +35,18 @@ class _WeatherScreenState extends State<WeatherScreen> {
     });
 
     try {
-      // zistí polohu telefónu
       final pos = await getCurrentPosition();
 
-      // zavolá API
-      final w = await _weatherService.getCurrentWeather(
-        pos.latitude,
-        pos.longitude,
-      );
+      // Načítaj oboje paralelne
+      final results = await Future.wait([
+        _weatherService.getCurrentWeather(pos.latitude, pos.longitude),
+        _weatherService.getHourlyForecast(pos.latitude, pos.longitude),
+      ]);
 
       if (!mounted) return;
       setState(() {
-        _weather = w;
+        _weather = results[0] as Weather;
+        _hourly = results[1] as List<HourlyForecast>;
       });
     } catch (e) {
       if (!mounted) return;
@@ -75,12 +61,43 @@ class _WeatherScreenState extends State<WeatherScreen> {
     }
   }
 
+  /// Ikona podľa OpenWeatherMap icon kódu
+  IconData _weatherIcon(String iconCode) {
+    switch (iconCode.substring(0, 2)) {
+      case '01': return Icons.wb_sunny;
+      case '02': return Icons.cloud_queue;
+      case '03': return Icons.cloud;
+      case '04': return Icons.cloud;
+      case '09': return Icons.grain;
+      case '10': return Icons.water_drop;
+      case '11': return Icons.thunderstorm;
+      case '13': return Icons.ac_unit;
+      case '50': return Icons.foggy;
+      default: return Icons.cloud_queue;
+    }
+  }
+
+  Widget _hourBox(HourlyForecast forecast) {
+    final hour = '${forecast.time.hour.toString().padLeft(2, '0')}:00';
+    final temp = '${forecast.temp.round()}°';
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(hour, style: const TextStyle(fontWeight: FontWeight.w600)),
+        const SizedBox(height: 6),
+        Icon(_weatherIcon(forecast.icon), size: 20),
+        const SizedBox(height: 6),
+        Text(temp),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    // TU bol problém – cityName? neexistuje
     final subtitle = (_weather?.cityName.isNotEmpty ?? false)
         ? '${_weather!.cityName}, dnes'
-        : 'Trebišov, dnes';
+        : 'Načítavam...';
 
     return ScreenScaffold(
       title: "Počasie",
@@ -88,50 +105,47 @@ class _WeatherScreenState extends State<WeatherScreen> {
       subtitle: subtitle,
       actions: [
         IconButton(
-          onPressed: _loadWeather, // refresh po kliknutí
+          onPressed: _loadWeather,
           icon: const Icon(Icons.my_location),
         ),
       ],
-      child: ListView(
-        children: [
-          SectionCard(
-            title: "Aktuálne",
-            child: _buildCurrentWeather(context),
-          ),
-          SectionCard(
-            title: "Ďalšie hodiny",
-            // forecast je zatiaľ fake
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                _hourBox(h: "12:00", t: "9°"),
-                _hourBox(h: "15:00", t: "10°"),
-                _hourBox(h: "18:00", t: "7°"),
-                _hourBox(h: "21:00", t: "5°"),
-              ],
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(
+          parent: BouncingScrollPhysics(),
+        ),
+        child: Column(
+          children: [
+            SectionCard(
+              title: "Aktuálne",
+              child: _buildCurrentWeather(context),
             ),
-          ),
-        ],
+            SectionCard(
+              title: "Predpoveď",
+              child: _buildHourlyForecast(),
+            ),
+            const SizedBox(height: 32),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildCurrentWeather(BuildContext context) {
-    if (_loading) {
-      return Row(
+    if (_loading && _weather == null) {
+      return const Row(
         children: [
-          const SizedBox(
+          SizedBox(
             width: 20,
             height: 20,
             child: CircularProgressIndicator(strokeWidth: 2),
           ),
-          const SizedBox(width: 12),
-          const Text("Načítavam počasie…"),
+          SizedBox(width: 12),
+          Text("Načítavam počasie…"),
         ],
       );
     }
 
-    if (_error != null) {
+    if (_error != null && _weather == null) {
       return Text(
         "Chyba: $_error",
         key: TKeys.weatherLocationError,
@@ -145,19 +159,62 @@ class _WeatherScreenState extends State<WeatherScreen> {
       return const Text("Počasie nie je k dispozícii");
     }
 
-    return Row(
+    return Column(
       children: [
-        const Icon(Icons.cloud, size: 34),
-        const SizedBox(width: 12),
-        Text(
-          "${_weather!.description}, ${_weather!.temp.toStringAsFixed(1)}°C",
+        Row(
+          children: [
+            Icon(_weatherIcon(_weather!.icon), size: 34),
+            const SizedBox(width: 12),
+            Text(
+              "${_weather!.description}, ${_weather!.temp.toStringAsFixed(1)}°C",
+            ),
+            const Spacer(),
+            Text(
+              "Pocitovo ${_weather!.feelsLike.toStringAsFixed(1)}°C",
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
         ),
-        const Spacer(),
-        Text(
-          "Pocitovo ${_weather!.feelsLike.toStringAsFixed(1)}°C",
-          style: Theme.of(context).textTheme.bodySmall,
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Icon(Icons.water_drop, size: 16, color: Colors.blue.shade300),
+            const SizedBox(width: 4),
+            Text("${_weather!.humidity}%"),
+            const SizedBox(width: 16),
+            Icon(Icons.air, size: 16, color: Colors.grey.shade400),
+            const SizedBox(width: 4),
+            Text("${_weather!.windSpeed.toStringAsFixed(1)} m/s"),
+          ],
         ),
       ],
+    );
+  }
+
+  Widget _buildHourlyForecast() {
+    if (_loading && _hourly.isEmpty) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(16),
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      );
+    }
+
+    if (_hourly.isEmpty) {
+      return const Text("Predpoveď nie je k dispozícii");
+    }
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: _hourly
+            .map((f) => Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: _hourBox(f),
+        ))
+            .toList(),
+      ),
     );
   }
 }
