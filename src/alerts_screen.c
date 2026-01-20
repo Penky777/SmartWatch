@@ -3,11 +3,12 @@
 #include "esp_log.h"
 #include <string.h>
 #include <stdlib.h>
+#include "Vibration/vibration.h"
 
 static const char *TAG = "ALERTS";
 
-// Notification storage
-#define MAX_NOTIFICATIONS 10
+// Notification storage (keep only the 2 most recent to reduce memory/stack usage)
+#define MAX_NOTIFICATIONS 2
 #define MAX_TITLE_LEN 64
 #define MAX_TEXT_LEN 128
 #define MAX_APP_LEN 32
@@ -26,8 +27,6 @@ static volatile bool notification_refresh_pending = false;
 static volatile bool is_refreshing = false;  // Prevent concurrent refresh
 
 // Forward declarations
-static void modal_close_cb(lv_event_t *e);
-static void card_text_event_cb(lv_event_t *e);
 static lv_obj_t* create_notification_card(lv_obj_t *parent, const char *title, const char *message, const char *app);
 void alerts_event_cb_to_menu(lv_event_t *e);
 static void refresh_alerts_screen(void);
@@ -37,65 +36,18 @@ bool alerts_has_pending_refresh(void);
 
 // ==================== NOTIFICATION CARD ====================
 
-typedef struct {
-    const char *full_text;
-} card_data_t;
-
-static void modal_close_cb(lv_event_t *e) {
-    if (lv_event_get_code(e) == LV_EVENT_CLICKED) {
-        lv_obj_del(lv_event_get_target(e));
-    }
-}
-
-static void card_text_event_cb(lv_event_t *e) {
-    if (lv_event_get_code(e) == LV_EVENT_CLICKED) {
-        lv_obj_t *card = lv_event_get_target(e);
-        card_data_t *data = (card_data_t *)lv_obj_get_user_data(card);
-        
-        if (!data || !data->full_text) return;
-        
-        // Create modal popup with full text
-        lv_obj_t *modal = lv_obj_create(lv_scr_act());
-        lv_obj_set_size(modal, lv_pct(95), lv_pct(80));
-        lv_obj_center(modal);
-        lv_obj_set_style_bg_color(modal, lv_color_black(), 0);
-        lv_obj_set_style_bg_opa(modal, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_color(modal, lv_color_white(), 0);
-        lv_obj_set_style_border_width(modal, 2, 0);
-        lv_obj_set_style_radius(modal, 15, 0);
-        lv_obj_set_style_pad_all(modal, 15, 0);
-        
-        // Add scrollable text
-        lv_obj_t *text_label = lv_label_create(modal);
-        lv_label_set_text(text_label, data->full_text);
-        lv_label_set_long_mode(text_label, LV_LABEL_LONG_WRAP);
-        lv_obj_set_width(text_label, lv_pct(100));
-        lv_obj_set_style_text_color(text_label, lv_color_white(), 0);
-        lv_obj_set_style_text_font(text_label, &lv_font_montserrat_14, 0);
-        
-        // Close on click
-        lv_obj_add_event_cb(modal, modal_close_cb, LV_EVENT_CLICKED, NULL);
-    }
-}
-
 static lv_obj_t* create_notification_card(lv_obj_t *parent, const char *title, const char *message, const char *app) {
-    // Card container (clickable)
-    lv_obj_t *card = lv_btn_create(parent);
+    // Card container (non-clickable to save stack)
+    lv_obj_t *card = lv_obj_create(parent);
     lv_obj_set_size(card, lv_pct(90), LV_SIZE_CONTENT);
     lv_obj_set_style_bg_color(card, lv_color_white(), 0);
     lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(card, 25, 0);
+    lv_obj_set_style_radius(card, 20, 0);
     lv_obj_set_style_border_width(card, 0, 0);
-    lv_obj_set_style_pad_all(card, 15, 0);
-    lv_obj_set_style_pad_row(card, 6, 0);
+    lv_obj_set_style_pad_all(card, 12, 0);
+    lv_obj_set_style_pad_row(card, 5, 0);
     lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-    
-    // Store full text for modal expand
-    card_data_t *card_data = malloc(sizeof(card_data_t));
-    if (card_data) {
-        card_data->full_text = message;
-        lv_obj_set_user_data(card, card_data);
-    }
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_CLICKABLE);
     
     // Layout
     lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
@@ -108,7 +60,6 @@ static lv_obj_t* create_notification_card(lv_obj_t *parent, const char *title, c
         lv_obj_set_style_text_color(app_lbl, lv_color_hex(0x888888), 0);
         lv_obj_set_style_text_font(app_lbl, &lv_font_montserrat_14, 0);
     }
-    
     // Title
     if (title && strlen(title) > 0) {
         lv_obj_t *title_lbl = lv_label_create(card);
@@ -119,19 +70,15 @@ static lv_obj_t* create_notification_card(lv_obj_t *parent, const char *title, c
         lv_obj_set_width(title_lbl, lv_pct(100));
     }
     
-    // Message (truncated with ellipsis)
+    // Message (wrapped, no truncation)
     if (message && strlen(message) > 0) {
         lv_obj_t *msg_lbl = lv_label_create(card);
-        lv_label_set_long_mode(msg_lbl, LV_LABEL_LONG_SCROLL_CIRCULAR);
+        lv_label_set_long_mode(msg_lbl, LV_LABEL_LONG_WRAP);
         lv_label_set_text(msg_lbl, message);
         lv_obj_set_width(msg_lbl, lv_pct(100));
-        lv_obj_set_height(msg_lbl, 50);  // Limit to ~2 lines
         lv_obj_set_style_text_color(msg_lbl, lv_color_hex(0x333333), 0);
         lv_obj_set_style_text_font(msg_lbl, &lv_font_montserrat_14, 0);
     }
-    
-    // Add click handler to show full text in modal
-    lv_obj_add_event_cb(card, card_text_event_cb, LV_EVENT_CLICKED, NULL);
     
     return card;
 }
@@ -253,6 +200,15 @@ static void refresh_alerts_screen(void) {
         }
     }
     
+    // Disable scrolling when 2 or fewer notifications to prevent crashes
+    if (notification_count <= 2) {
+        lv_obj_clear_flag(card_container, LV_OBJ_FLAG_SCROLLABLE);
+        ESP_LOGI(TAG, "Scrolling disabled (%d notifications)", notification_count);
+    } else {
+        lv_obj_add_flag(card_container, LV_OBJ_FLAG_SCROLLABLE);
+        ESP_LOGI(TAG, "Scrolling enabled (%d notifications)", notification_count);
+    }
+    
     is_refreshing = false;
 }
 
@@ -307,6 +263,10 @@ void alerts_add_notification(const char *title, const char *message, const char 
     
     notification_count++;
     notification_refresh_pending = true;  // Mark that screen needs refresh
+    
+    // Trigger vibration feedback when alert arrives
+    ESP_LOGI(TAG, "Triggering vibration feedback for new notification");
+    vibe_pulse();
     
     ESP_LOGI(TAG, "Notification added to queue (count=%d)", notification_count);
 }

@@ -27,59 +27,130 @@ void internal_bt_rx_handler(const unsigned char *data, uint16_t len) {
 }
 
 // Parse and handle notification JSON
+// Helper function: Extract JSON string field value, handling UTF-8 and escaped quotes
+// Replaces emoji and non-ASCII characters with '?' for safety
+static bool extract_json_string(const char *msg, const char *field, char *output, int max_len)
+{
+    if (!msg || !field || !output || max_len <= 1) {
+        return false;
+    }
+    
+    output[0] = '\0';
+    
+    // Build search string: "fieldname":"
+    char search_buf[64];
+    int search_len = snprintf(search_buf, sizeof(search_buf), "\"%s\":\"", field);
+    if (search_len <= 0 || search_len >= sizeof(search_buf)) {
+        return false;
+    }
+    
+    const char *field_start = strstr(msg, search_buf);
+    if (!field_start) {
+        return false;
+    }
+    
+    // Move past the field prefix
+    const char *value_start = field_start + search_len;
+    
+    // Find the closing quote, handling escaped quotes
+    int copied = 0;
+    const char *pos = value_start;
+    
+    while (*pos != '\0' && copied < max_len - 1) {
+        if (*pos == '\\' && *(pos + 1) != '\0') {
+            // Handle escape sequences
+            char escaped = *(pos + 1);
+            if (escaped == '"') {
+                output[copied++] = '"';
+                pos += 2;
+            } else if (escaped == '\\') {
+                output[copied++] = '\\';
+                pos += 2;
+            } else if (escaped == 'n') {
+                output[copied++] = '\n';
+                pos += 2;
+            } else if (escaped == 'r') {
+                output[copied++] = '\r';
+                pos += 2;
+            } else if (escaped == 't') {
+                output[copied++] = '\t';
+                pos += 2;
+            } else {
+                // Unknown escape, just copy the character
+                output[copied++] = *pos;
+                pos++;
+            }
+        } else if (*pos == '"') {
+            // Found unescaped closing quote
+            output[copied] = '\0';
+            return true;
+        } else if ((unsigned char)*pos < 32 || (unsigned char)*pos >= 127) {
+            // Replace emoji and non-ASCII characters with '?'
+            // ASCII control chars (0-31) and non-ASCII (128+) get replaced
+            output[copied++] = '?';
+            // Skip multi-byte UTF-8 sequences (they have high bit set)
+            if ((unsigned char)*pos >= 128) {
+                pos++;
+                // Skip continuation bytes (10xxxxxx pattern)
+                while ((unsigned char)*pos >= 128 && (unsigned char)*pos < 192 && copied < max_len - 1) {
+                    pos++;
+                }
+                continue;
+            }
+            pos++;
+        } else {
+            // Regular ASCII character
+            output[copied++] = *pos;
+            pos++;
+        }
+    }
+    
+    output[copied] = '\0';
+    return copied > 0;
+}
+
+// Parse and handle notification JSON
 static void handle_notification(const char *msg)
 {
-    ESP_LOGI("COMM", "Notification received");
+    ESP_LOGI("COMM", "→ Parsing notification JSON...");
     
-    char title[101] = {0};
-    char text[151] = {0};
-    char app[64] = {0};
+    // Match buffer sizes with alerts_screen.c definitions
+    char title[64] = {0};    // MAX_TITLE_LEN from alerts_screen.c
+    char text[128] = {0};    // MAX_TEXT_LEN from alerts_screen.c
+    char app[32] = {0};      // MAX_APP_LEN from alerts_screen.c
     
-    // Extract title if present (safely)
-    const char *title_start = strstr(msg, "\"title\":\"");
-    if (title_start) {
-        title_start += 9; // skip "title":"
-        const char *title_end = strchr(title_start, '\"');
-        if (title_end && (title_end - title_start) < 100) {
-            int len = title_end - title_start;
-            if (len > 100) len = 100;
-            memcpy(title, title_start, len);
-            title[len] = '\0';
-            ESP_LOGI("COMM", "Notification title: %s", title);
-        }
+    bool has_title = extract_json_string(msg, "title", title, sizeof(title));
+    bool has_text = extract_json_string(msg, "text", text, sizeof(text));
+    bool has_app = extract_json_string(msg, "app", app, sizeof(app));
+    
+    if (has_title) {
+        ESP_LOGI("COMM", "  ✓ Title: %s", title);
+    } else {
+        ESP_LOGW("COMM", "  ✗ No title field found");
     }
     
-    // Extract text if present (safely)
-    const char *text_start = strstr(msg, "\"text\":\"");
-    if (text_start) {
-        text_start += 8; // skip "text":"
-        const char *text_end = strchr(text_start, '\"');
-        if (text_end && (text_end - text_start) < 150) {
-            int len = text_end - text_start;
-            if (len > 150) len = 150;
-            memcpy(text, text_start, len);
-            text[len] = '\0';
-            ESP_LOGI("COMM", "Notification text: %s", text);
-        }
+    if (has_text) {
+        ESP_LOGI("COMM", "  ✓ Text: %s", text);
+    } else {
+        ESP_LOGW("COMM", "  ✗ No text field found");
     }
     
-    // Extract app package name if present
-    const char *app_start = strstr(msg, "\"app\":\"");
-    if (app_start) {
-        app_start += 7; // skip "app":"
-        const char *app_end = strchr(app_start, '\"');
-        if (app_end && (app_end - app_start) < 63) {
-            int len = app_end - app_start;
-            if (len > 63) len = 63;
-            memcpy(app, app_start, len);
-            app[len] = '\0';
-            ESP_LOGI("COMM", "Notification app: %s", app);
-        }
+    if (has_app) {
+        ESP_LOGI("COMM", "  ✓ App: %s", app);
+    } else {
+        ESP_LOGI("COMM", "  ℹ No app field (optional)");
+    }
+    
+    // Validate we got at least title or text
+    if (!has_title && !has_text) {
+        ESP_LOGE("COMM", "  ✗ Invalid notification: missing both title and text!");
+        return;
     }
     
     // Store notification (UI update will happen in main task)
+    ESP_LOGI("COMM", "→ Storing notification in alerts system...");
     alerts_add_notification(title, text, app);
-    ESP_LOGI("COMM", "Notification stored (count=%d)", alerts_get_count());
+    ESP_LOGI("COMM", "✓ Notification stored successfully (total count=%d)", alerts_get_count());
 }
 
 // Parse and handle time sync JSON: {"type":"sync","ts":1768301013,"tzMin":60}
@@ -160,12 +231,16 @@ void comm_manager_on_rx(const char *msg)
         return;
     }
     
-    // Handle notifications
+    // Handle notifications - with detailed debug logging
     if (strstr(msg, "\"type\":\"notification\"")) {
-        ESP_LOGI("COMM", "Notification request received");
+        ESP_LOGI("COMM", "✓ Notification request received - triggering handler");
         handle_notification(msg);
+        ESP_LOGI("COMM", "✓ Notification handler completed");
         return;
     }
+    
+    // If we get here, message type wasn't recognized
+    ESP_LOGW("COMM", "⚠ Unknown message type received (len=%d)", msg_len);
     
     // Pass to app callback if registered (but be careful!)
     if (app_rx_cb) {
