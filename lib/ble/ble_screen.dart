@@ -1,15 +1,16 @@
-// lib/ble/lib/ble_screen.dart
+// lib/ble/ble_screen.dart
 import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_reactive_ble/flutter_reactive_ble.dart' hide BleStatus;
 
-import '../../di.dart';
-import '../../ble/ble_repository.dart';
-import '../../widgets/app_scaffold.dart';
-import '../../widgets/status_badge.dart';
+import '../di.dart';
+import 'ble_repository.dart';
+import '../widgets/app_scaffold.dart';
+import '../widgets/status_badge.dart';
 import '../test_ids.dart';
 import 'ble_foreground_service.dart';
+import 'ble_permissions.dart'; // ✅ PRIDANÉ
 
 class BleScreen extends StatefulWidget {
   const BleScreen({super.key});
@@ -64,14 +65,17 @@ class _BleScreenState extends State<BleScreen> {
       }
     });
 
-    // scan results (repo už filtruje len na kWatchId)
+    // scan results
     _scanStreamSub = repo.scannedDevices.listen((d) {
       if (!mounted) return;
 
       final i = _devices.indexWhere((x) => x.id == d.id);
       setState(() {
-        if (i == -1) _devices.add(d);
-        else _devices[i] = d;
+        if (i == -1) {
+          _devices.add(d);
+        } else {
+          _devices[i] = d;
+        }
       });
     });
 
@@ -100,9 +104,50 @@ class _BleScreenState extends State<BleScreen> {
       }
     });
 
+    // ✅ OPRAVA: Spusti scan s kontrolou permissions
     if (_status != BleStatus.connected) {
-      repo.startScan(timeout: const Duration(seconds: 20), filterService: false);
+      _initScan();
     }
+  }
+
+  // ✅ NOVÁ METÓDA: Kontrola permissions pred prvým scanom
+  Future<void> _initScan() async {
+    final granted = await ensureBlePermissions();
+    if (!mounted) return;
+
+    if (granted) {
+      repo.startScan(timeout: const Duration(seconds: 20), filterService: false);
+    } else {
+      _showPermissionDeniedSnackbar();
+    }
+  }
+
+  // ✅ NOVÁ METÓDA: Scan s kontrolou permissions (pre tlačidlo Hľadať)
+  Future<void> _startScanWithPermissions() async {
+    final granted = await ensureBlePermissions();
+    if (!mounted) return;
+
+    if (!granted) {
+      _showPermissionDeniedSnackbar();
+      return;
+    }
+
+    _devices.clear();
+    repo.startScan(
+      timeout: const Duration(seconds: 20),
+      filterService: false,
+    );
+    setState(() {});
+  }
+
+  // ✅ NOVÁ METÓDA: Snackbar pre odmietnuté povolenia
+  void _showPermissionDeniedSnackbar() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('BLE/Location povolenia neboli udelené. Povoľte ich v nastaveniach.'),
+        duration: Duration(seconds: 4),
+      ),
+    );
   }
 
   @override
@@ -205,14 +250,8 @@ class _BleScreenState extends State<BleScreen> {
             children: [
               ElevatedButton.icon(
                 key: TKeys.bleBtnSearch,
-                onPressed: () {
-                  _devices.clear();
-                  repo.startScan(
-                    timeout: const Duration(seconds: 20),
-                    filterService: false,
-                  );
-                  setState(() {});
-                },
+                // ✅ OPRAVA: Volá metódu s kontrolou permissions
+                onPressed: _startScanWithPermissions,
                 icon: const Icon(Icons.search),
                 label: const Text('Hľadať'),
               ),
