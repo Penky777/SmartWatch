@@ -64,12 +64,20 @@ typedef struct {
     // DC offset tracking for AC extraction
     float ir_dc_offset;
     float red_dc_offset;
+    bool dc_offsets_initialized;  // Flag to track if DC offsets have been initialized
     
     // For stationary signal peak detection on AC component
     float last_ac_ir;
     float last_last_ac_ir;
     int32_t min_ac_value;
     int32_t max_ac_value;
+    
+    // Peak detection state (must be reset on max_start)
+    uint32_t total_samples;
+    float prev_ac_ir;
+    float prev_prev_ac_ir;
+    uint32_t samples_since_peak;
+    uint32_t valid_signal_count;
 } hr_state_t;
 
 static hr_state_t hr_state = {0};
@@ -148,6 +156,13 @@ static esp_err_t max_configure(void) {
 // High-pass filter to extract AC component (removes DC offset)
 // Uses exponential moving average for DC tracking
 static float extract_ac_component(float raw_value, float *dc_offset) {
+    // If DC offset hasn't been initialized yet, initialize it
+    if (!hr_state.dc_offsets_initialized) {
+        *dc_offset = raw_value;
+        hr_state.dc_offsets_initialized = true;
+        return 0;
+    }
+    
     // Update DC offset estimate (high-pass filter)
     *dc_offset = AC_FILTER_ALPHA * (*dc_offset) + (1.0f - AC_FILTER_ALPHA) * raw_value;
     
@@ -167,17 +182,23 @@ static bool detect_peak_ac(float current_ac, float *prev_ac, float *prev_prev_ac
         hr_state.min_ac_value = (int32_t)current_ac;
     }
     
+    // Calculate signal amplitude (peak-to-peak)
+    int32_t amplitude = hr_state.max_ac_value - hr_state.min_ac_value;
+    
     // Detect peak on AC signal: current > prev AND prev > prev_prev (local maximum)
     // This finds the systolic peaks in the heartbeat waveform
+    // Use adaptive threshold based on signal amplitude (works for both moving and stationary)
+    float peak_threshold = (amplitude > 0) ? amplitude * 0.3f : 50.0f;  // 30% of amplitude or 50 for weak signals
+    
     bool is_peak = (*prev_ac > *prev_prev_ac) && 
                    (*prev_ac > current_ac) && 
                    (*samples_since_peak > MIN_PEAK_DISTANCE) &&
-                   (*prev_ac > 1000);  // Peak must be significant in AC domain
+                   (*prev_ac > peak_threshold);  // Adaptive threshold
     
     if (is_peak) {
         *samples_since_peak = 0;
-        ESP_LOGD(TAG, "AC peak detected: prev_ac=%.0f, amplitude_range=%d", 
-                 *prev_ac, hr_state.max_ac_value - hr_state.min_ac_value);
+        ESP_LOGD(TAG, "AC peak detected: prev_ac=%.0f, amplitude=%d, threshold=%.0f", 
+                 *prev_ac, amplitude, peak_threshold);
     }
     
     // Shift history
@@ -238,8 +259,13 @@ static esp_err_t max_read_sensor_data(uint8_t *spo2, uint8_t *heart_rate) {
     uint32_t red, ir;
     esp_err_t ret = max_read_fifo(&red, &ir);
     if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "FIFO read failed");
+        ESP_LOGW(TAG, "FIFO read failed: %s", esp_err_to_name(ret));
         return ret;
+    }
+    
+    // Debug: log first few reads to verify data flow
+    if (hr_state.total_samples < 5) {
+        ESP_LOGI(TAG, "FIFO data: Red=%lu, IR=%lu (sample #%lu)", red, ir, hr_state.total_samples);
     }
     
     // Store in circular buffer
@@ -253,32 +279,26 @@ static esp_err_t max_read_sensor_data(uint8_t *spo2, uint8_t *heart_rate) {
     float red_float = (float)red;
     
     float ir_ac = extract_ac_component(ir_float, &hr_state.ir_dc_offset);
-    float red_ac = extract_ac_component(red_float, &hr_state.red_dc_offset);
+    extract_ac_component(red_float, &hr_state.red_dc_offset);  // Process red for DC offset tracking
     
     // Detect peaks on AC signal (works when stationary!)
-    static uint32_t total_samples = 0;
-    static float prev_ac_ir = 0;
-    static float prev_prev_ac_ir = 0;
-    static uint32_t samples_since_peak = 0;
-    static uint32_t valid_signal_count = 0;
-    
-    total_samples++;
+    hr_state.total_samples++;
     
     // Check for finger presence based on signal DC level
     if (ir < DC_THRESHOLD) {
-        valid_signal_count = 0;
+        hr_state.valid_signal_count = 0;
         hr_state.no_signal_count++;
         
         if (hr_state.no_signal_count >= FINGER_DETECTION_LIMIT) {
             hr_state.finger_detected = false;
         }
     } else {
-        valid_signal_count++;
+        hr_state.valid_signal_count++;
         hr_state.no_signal_count = 0;
-        hr_state.finger_detected = (valid_signal_count > 20);  // Need at least 20 valid samples
+        hr_state.finger_detected = (hr_state.valid_signal_count > 20);  // Need at least 20 valid samples
         
         // Detect peaks on AC component
-        if (detect_peak_ac(ir_ac, &prev_ac_ir, &prev_prev_ac_ir, &samples_since_peak)) {
+        if (detect_peak_ac(ir_ac, &hr_state.prev_ac_ir, &hr_state.prev_prev_ac_ir, &hr_state.samples_since_peak)) {
             // Calculate interval since last peak
             uint32_t current_sample = (buffer_index == 0) ? BUFFER_SIZE - 1 : buffer_index - 1;
             uint32_t interval = (current_sample - hr_state.last_peak_sample + BUFFER_SIZE) % BUFFER_SIZE;
@@ -383,18 +403,42 @@ void max_start(void) {
         ESP_LOGW(TAG, "Cannot start - not initialized");
         return;
     }
+    
+    // First ensure sensor is in a known state by putting it in shutdown, then restarting
+    max_write_reg(MAX30102_REG_MODE_CONFIG, 0x00);  // Shutdown mode
+    vTaskDelay(pdMS_TO_TICKS(5));  // Brief delay
+    
+    // Now reconfigure and start fresh
+    max_configure();
+    
+    // Clear FIFO pointers after configuration
+    max_write_reg(MAX30102_REG_FIFO_WR_PTR, 0x00);
+    max_write_reg(MAX30102_REG_FIFO_RD_PTR, 0x00);
+    
     running = true;
     g_data_valid = false;
     buffer_index = 0;
     samples_collected = 0;
+    
+    // Fully reset all state variables
     memset(&hr_state, 0, sizeof(hr_state));
     hr_state.min_ac_value = 0;
     hr_state.max_ac_value = 0;
+    hr_state.total_samples = 0;
+    hr_state.prev_ac_ir = 0;
+    hr_state.prev_prev_ac_ir = 0;
+    hr_state.samples_since_peak = 0;
+    hr_state.valid_signal_count = 0;
+    
     ESP_LOGI(TAG, "Measurement started (AC-based heart rate detection active)");
 }
 
 void max_stop(void) {
     running = false;
+    
+    // Properly put sensor into idle mode
+    max_write_reg(MAX30102_REG_MODE_CONFIG, 0x00);  // Put in OFF mode
+    
     ESP_LOGI(TAG, "Measurement stopped");
 }
 
@@ -424,10 +468,20 @@ static void max_task(void *arg) {
     
     uint8_t spo2 = 0, hr = 0;
     uint32_t update_count = 0;
+    bool was_running = false;
     
     while (1) {
         if (running && initialized) {
+            // Log state change when starting
+            if (!was_running) {
+                ESP_LOGI(TAG, "Task: running state activated, starting sensor reads");
+                was_running = true;
+                update_count = 0;
+            }
+            
             esp_err_t ret = max_read_sensor_data(&spo2, &hr);
+            
+            ESP_LOGD(TAG, "Read result: ret=%d, valid=%d, HR=%u, SpO2=%u", ret, g_data_valid, hr, spo2);
             
             if (ret == ESP_OK && g_data_valid) {
                 // Only update if we got new valid data
@@ -451,6 +505,10 @@ static void max_task(void *arg) {
             // 100Hz sampling = 10ms delay
             vTaskDelay(pdMS_TO_TICKS(10));
         } else {
+            if (was_running) {
+                ESP_LOGI(TAG, "Task: running state deactivated");
+                was_running = false;
+            }
             g_data_valid = false;
             vTaskDelay(pdMS_TO_TICKS(100));
         }
