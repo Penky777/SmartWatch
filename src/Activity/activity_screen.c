@@ -24,6 +24,8 @@ static bool screen_active = false;
 // Forward declarations
 static void swipe_back_event_cb(lv_event_t *e);
 static void activity_update_timer_cb(lv_timer_t *timer);
+void activity_screen_on_show(void);
+void activity_screen_on_hide(void);
 
 lv_obj_t *build_activity_screen(void) {
     lv_obj_t *scr = lv_obj_create(NULL);
@@ -99,26 +101,9 @@ lv_obj_t *build_activity_screen(void) {
     // Swipe gesture
     lv_obj_add_event_cb(scr, swipe_back_event_cb, LV_EVENT_GESTURE, NULL);
 
-    // Mark screen as active
-    screen_active = true;
-    
     ESP_LOGI(TAG, "Activity screen opened");
-    
-    // Start MAX30102 measurements
-    max_start();
 
-    // Create or resume timer (only once)
-    if (activity_update_timer == NULL) {
-        activity_update_timer = lv_timer_create(activity_update_timer_cb, 1000, NULL);
-        ESP_LOGI(TAG, "Created activity update timer");
-    } else {
-        lv_timer_resume(activity_update_timer);
-        ESP_LOGI(TAG, "Resumed activity update timer");
-    }
-
-    // Force immediate update
-    activity_update_timer_cb(NULL);
-
+    // Timer/sensor start happens in activity_screen_on_show() when screen is shown
     return scr;
 }
 
@@ -181,11 +166,22 @@ static void activity_update_timer_cb(lv_timer_t *timer) {
     // Read heart rate and SpO2 from MAX30102
     uint8_t bpm = 0, spo2 = 0;
     esp_err_t ret = max_read(&spo2, &bpm);
-    
+    static bool has_valid_data = false;
+
     if (ret == ESP_OK) {
+        has_valid_data = true;
         ESP_LOGD(TAG, "MAX30102 read: BPM=%u, SpO2=%u", bpm, spo2);
+    } else if (ret == ESP_ERR_NOT_FOUND) {
+        // Warm-up/insufficient samples: quiet log until we’ve seen valid data
+        if (has_valid_data) {
+            ESP_LOGW(TAG, "MAX30102 waiting for valid data");
+        } else {
+            ESP_LOGD(TAG, "MAX30102 warming up (collecting samples)");
+        }
+        bpm = 0;
+        spo2 = 0;
     } else {
-        ESP_LOGW(TAG, "MAX30102 read failed");
+        ESP_LOGW(TAG, "MAX30102 read failed (%s)", esp_err_to_name(ret));
         bpm = 0;
         spo2 = 0;
     }
@@ -199,21 +195,45 @@ static void swipe_back_event_cb(lv_event_t *e) {
     lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_get_act());
     if (dir == LV_DIR_RIGHT) {
         ESP_LOGI(TAG, "Swipe back detected");
-        
-        // Mark screen as inactive
-        screen_active = false;
-        
-        // Pause timer (don't delete - screen is cached)
-        if (activity_update_timer) {
-            lv_timer_pause(activity_update_timer);
-            ESP_LOGI(TAG, "Paused activity update timer");
-        }
-        
-        // Stop MAX30102 to save power
-        max_stop();
-        ESP_LOGI(TAG, "Stopped MAX30102");
-        
-        // Navigate back
+
+        // Deactivate and navigate back
+        activity_screen_on_hide();
         ui_show_menu();
     }
+}
+
+// Called whenever the Activity screen becomes visible
+void activity_screen_on_show(void) {
+    screen_active = true;
+
+    // Start sensor and resume/create timer
+    max_start();
+
+    if (activity_update_timer == NULL) {
+        activity_update_timer = lv_timer_create(activity_update_timer_cb, 1000, NULL);
+        ESP_LOGI(TAG, "Created activity update timer");
+    } else {
+        lv_timer_resume(activity_update_timer);
+        ESP_LOGI(TAG, "Resumed activity update timer");
+    }
+
+    // Force immediate update
+    activity_update_timer_cb(NULL);
+}
+
+// Called whenever the Activity screen is hidden
+void activity_screen_on_hide(void) {
+    if (!screen_active) {
+        return;
+    }
+
+    screen_active = false;
+
+    if (activity_update_timer) {
+        lv_timer_pause(activity_update_timer);
+        ESP_LOGI(TAG, "Paused activity update timer");
+    }
+
+    max_stop();
+    ESP_LOGI(TAG, "Stopped MAX30102");
 }

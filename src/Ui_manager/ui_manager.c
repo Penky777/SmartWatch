@@ -6,6 +6,7 @@
 #include "freertos/task.h"
 #include "lvgl.h"
 #include "../Watchface/watchface_screen.h"
+#include "../Activity/activity_screen.h"
 
 static const char *TAG = "UI_MANAGER";
 
@@ -133,12 +134,21 @@ static void switch_screen(lv_obj_t **cache, lv_obj_t *(*builder)(void), const ch
     
     
     if (current_screen != NULL && current_screen != *cache) {
+        // Notify current screen it's being hidden
+        if (current_screen == screen_activity) {
+            activity_screen_on_hide();
+        }
         push_screen_history(current_screen);
     }
     
     ESP_LOGI(TAG, "Loading %s screen directly", name);
     lv_scr_load(*cache);
     current_screen = *cache;
+
+    // Notify new screen it is now visible
+    if (current_screen == screen_activity) {
+        activity_screen_on_show();
+    }
     
     log_heap("after switch");
     vTaskDelay(pdMS_TO_TICKS(10));  // Give time for screen to settle
