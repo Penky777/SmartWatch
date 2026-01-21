@@ -1,33 +1,38 @@
+// lib/screens/calendar_screen.dart
+
 import 'package:flutter/material.dart';
 import '../widgets/screen_scafold.dart';
 import '../widgets/section_card.dart';
 import '../test_ids.dart';
+import '../l10n/app_localizations.dart';
 
 class CalendarScreen extends StatelessWidget {
   const CalendarScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
+
     return ScreenScaffold(
-      title: "Kalendár",
+      title: l10n.tr('calendar_title'),
       titleKey: TKeys.titleCalendar,
-      subtitle: "Najbližšie udalosti",
+      subtitle: l10n.tr('calendar_subtitle'),
       actions: [IconButton(onPressed: () {}, icon: const Icon(Icons.add))],
       child: ListView(
         children: [
           SectionCard(
-            title: "Dnes",
-            child: Column(
-              children: const [
+            title: l10n.tr('today'),
+            child: const Column(
+              children: [
                 _EventRow(time: "14:30", title: "Mladší A vs. Mladší B", place: "ŠH Trebišov"),
                 _EventRow(time: "18:30", title: "Tréning mužov", place: "ŠH Trebišov"),
               ],
             ),
           ),
           SectionCard(
-            title: "Zajtra",
-            child: Column(
-              children: const [
+            title: l10n.tr('tomorrow'),
+            child: const Column(
+              children: [
                 _EventRow(time: "09:00", title: "Bežecká príprava", place: "Zemplínska šírava"),
               ],
             ),

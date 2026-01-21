@@ -1,3 +1,5 @@
+// lib/screens/home_screen.dart
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -8,6 +10,7 @@ import '../widgets/screen_scafold.dart';
 import '../widgets/section_card.dart';
 import '../router.dart';
 import '../test_ids.dart';
+import '../l10n/app_localizations.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -25,7 +28,6 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _repo = getIt<BleRepository>();
 
-    // Počúvaj health data stream
     _healthSub = _repo.healthDataStream.listen((_) {
       if (mounted) setState(() {});
     });
@@ -39,35 +41,33 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     final h = _repo.healthData;
 
     final items = [
-      _HomeItem(Icons.directions_run, "Aktivita", AppRoutes.activity, TKeys.tileActivity),
-      _HomeItem(Icons.favorite, "Zdravie", AppRoutes.health, TKeys.tileHealth),
-      _HomeItem(Icons.cloud, "Počasie", AppRoutes.weather, TKeys.tileWeather),
-      _HomeItem(Icons.calendar_month, "Kalendár", AppRoutes.calendar, TKeys.tileCalendar),
-      _HomeItem(Icons.notifications, "Notifikácie", AppRoutes.notifications, TKeys.tileNotifications),
-      _HomeItem(Icons.watch, "Watchfaces", AppRoutes.watchfaces, TKeys.tileWatchfaces),
-      _HomeItem(Icons.settings, "Nastavenia", AppRoutes.settings, TKeys.tileSettings),
-      _HomeItem(Icons.bluetooth, "Bluetooth", AppRoutes.ble, TKeys.tileBluetooth),
+      _HomeItem(Icons.directions_run, l10n.tr('tile_activity'), AppRoutes.activity, TKeys.tileActivity),
+      _HomeItem(Icons.favorite, l10n.tr('tile_health'), AppRoutes.health, TKeys.tileHealth),
+      _HomeItem(Icons.cloud, l10n.tr('tile_weather'), AppRoutes.weather, TKeys.tileWeather),
+      _HomeItem(Icons.calendar_month, l10n.tr('tile_calendar'), AppRoutes.calendar, TKeys.tileCalendar),
+      _HomeItem(Icons.watch, l10n.tr('tile_watchfaces'), AppRoutes.watchfaces, TKeys.tileWatchfaces),
+      _HomeItem(Icons.settings, l10n.tr('tile_settings'), AppRoutes.settings, TKeys.tileSettings),
+      _HomeItem(Icons.bluetooth, l10n.tr('tile_bluetooth'), AppRoutes.ble, TKeys.tileBluetooth),
     ];
 
-    // Formátovanie hodnôt z hodiniek
     final stepsValue = h.steps > 0 ? "${h.steps}" : "—";
     final heartRateValue = h.heartRate > 0 ? "${h.heartRate} bpm" : "— bpm";
     final spo2Value = h.spo2 > 0 ? "${h.spo2}%" : "—%";
 
     return ScreenScaffold(
-      title: "SmartWatch",
+      title: l10n.tr('home_title'),
       titleKey: TKeys.titleHome,
-      subtitle: "Všetko dôležité na jednom mieste",
+      subtitle: l10n.tr('home_subtitle'),
       child: Column(
         children: [
           SectionCard(
-            title: "Rýchly prístup",
+            title: l10n.tr('quick_access'),
             child: LayoutBuilder(
               builder: (context, c) {
-                // šírka dlaždice ~120px → vyjde pekný počet stĺpcov
                 final cols = (c.maxWidth / 120).floor().clamp(3, 5);
                 return GridView.builder(
                   shrinkWrap: true,
@@ -86,14 +86,14 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           const SizedBox(height: 8),
           SectionCard(
-            title: "Dnešné zhrnutie",
+            title: l10n.tr('today_summary'),
             child: Row(
               children: [
                 Expanded(
                   child: _SummaryTile(
                     key: TKeys.summarySteps,
                     icon: Icons.directions_walk,
-                    label: "Kroky",
+                    label: l10n.tr('steps'),
                     value: stepsValue,
                   ),
                 ),
@@ -102,7 +102,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: _SummaryTile(
                     key: TKeys.summaryHeart,
                     icon: Icons.favorite,
-                    label: "Tep",
+                    label: l10n.tr('heart_rate'),
                     value: heartRateValue,
                   ),
                 ),
@@ -110,7 +110,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 Expanded(
                   child: _SummaryTile(
                     icon: Icons.health_and_safety,
-                    label: "SpO₂",
+                    label: l10n.tr('spo2'),
                     value: spo2Value,
                   ),
                 ),

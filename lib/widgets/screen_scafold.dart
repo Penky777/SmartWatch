@@ -1,3 +1,5 @@
+// lib/widgets/screen_scafold.dart
+
 import 'package:flutter/material.dart';
 
 /// Jednotný scaffold s AppBarom a konzistentnými okrajmi.
@@ -19,38 +21,34 @@ class ScreenScaffold extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [cs.primary.withOpacity(0.12), Colors.transparent],
-          begin: Alignment.topCenter,
-          end: Alignment.center,
-        ),
-      ),
-      child: Scaffold(
-        backgroundColor: Colors.transparent,
-        appBar: AppBar(
-          title: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(title, key: titleKey),
-              if (subtitle != null)
-                Text(
-                  subtitle!,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Colors.white70,
-                  ),
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    // ✅ Jednoduché pozadie - sivé pre light, čierne pre dark
+    final backgroundColor = Theme.of(context).scaffoldBackgroundColor;
+
+    return Scaffold(
+      backgroundColor: backgroundColor,
+      appBar: AppBar(
+        backgroundColor: backgroundColor,
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, key: titleKey),
+            if (subtitle != null)
+              Text(
+                subtitle!,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: isDark ? Colors.white70 : Colors.black54,
                 ),
-            ],
-          ),
-          actions: actions,
+              ),
+          ],
         ),
-        body: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
-            child: child,
-          ),
+        actions: actions,
+      ),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+          child: child,
         ),
       ),
     );

@@ -1,28 +1,35 @@
+// lib/screens/watchfaces_screen.dart
+
 import 'package:flutter/material.dart';
 import '../widgets/screen_scafold.dart';
 import '../widgets/section_card.dart';
 import '../test_ids.dart';
+import '../l10n/app_localizations.dart';
 
 class WatchfacesScreen extends StatelessWidget {
   const WatchfacesScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     final faces = List.generate(8, (i) => "Watchface ${i + 1}");
+
     return ScreenScaffold(
       titleKey: TKeys.titleWatchfaces,
-      title: "Watchfaces",
-      subtitle: "Vyber si vzhľad hodiniek",
+      title: l10n.tr('watchfaces_title'),
+      subtitle: l10n.tr('watchfaces_subtitle'),
       child: ListView(
         children: [
           SectionCard(
-            title: "Kolekcia",
+            title: l10n.tr('collection'),
             child: GridView.builder(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
               itemCount: faces.length,
               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 3, crossAxisSpacing: 10, mainAxisSpacing: 10,
+                crossAxisCount: 3,
+                crossAxisSpacing: 10,
+                mainAxisSpacing: 10,
               ),
               itemBuilder: (_, i) => _FaceTile(name: faces[i]),
             ),

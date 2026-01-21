@@ -1,3 +1,5 @@
+// lib/screens/health_screen.dart
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -9,6 +11,7 @@ import '../widgets/screen_scafold.dart';
 import '../widgets/section_card.dart';
 import '../widgets/metric_chip.dart';
 import '../test_ids.dart';
+import '../l10n/app_localizations.dart';
 
 class HealthScreen extends StatefulWidget {
   const HealthScreen({super.key});
@@ -50,12 +53,12 @@ class _HealthScreenState extends State<HealthScreen> {
     super.dispose();
   }
 
-  String _stressLevel(int heartRate) {
+  String _stressLevel(int heartRate, AppLocalizations l10n) {
     if (heartRate == 0) return '—';
-    if (heartRate < 60) return 'nízky';
-    if (heartRate < 80) return 'normálny';
-    if (heartRate < 100) return 'mierne zvýšený';
-    return 'vysoký';
+    if (heartRate < 60) return l10n.tr('stress_low');
+    if (heartRate < 80) return l10n.tr('stress_normal');
+    if (heartRate < 100) return l10n.tr('stress_elevated');
+    return l10n.tr('stress_high');
   }
 
   List<FlSpot> _toSpots(List<int> data) {
@@ -73,12 +76,13 @@ class _HealthScreenState extends State<HealthScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     final isConnected = _repo?.currentStatus == BleStatus.connected;
     final colorScheme = Theme.of(context).colorScheme;
     final h = _repo?.healthData ?? HealthData();
 
     return ScreenScaffold(
-      title: "Zdravie",
+      title: l10n.tr('health_title'),
       titleKey: TKeys.titleHealth,
       actions: [
         IconButton(
@@ -86,7 +90,6 @@ class _HealthScreenState extends State<HealthScreen> {
           icon: const Icon(Icons.refresh),
         ),
       ],
-      // OPRAVA: SingleChildScrollView namiesto ListView - spoľahlivejší scroll
       child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(
           parent: BouncingScrollPhysics(),
@@ -103,41 +106,41 @@ class _HealthScreenState extends State<HealthScreen> {
                   color: Colors.orange.withOpacity(0.2),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Row(
+                child: Row(
                   children: [
-                    Icon(Icons.watch_off, color: Colors.orange),
-                    SizedBox(width: 8),
-                    Text('Hodinky nie sú pripojené'),
+                    const Icon(Icons.watch_off, color: Colors.orange),
+                    const SizedBox(width: 8),
+                    Text(l10n.tr('watch_not_connected')),
                   ],
                 ),
               ),
 
             // Realtime metriky
             SectionCard(
-              title: "Realtime",
+              title: l10n.tr('realtime'),
               child: Wrap(
                 spacing: 8,
                 runSpacing: 8,
                 children: [
                   MetricChip(
                     icon: Icons.favorite,
-                    label: "Tep",
+                    label: l10n.tr('heart_rate'),
                     value: h.heartRate > 0 ? "${h.heartRate} bpm" : "— bpm",
                   ),
                   MetricChip(
                     icon: Icons.health_and_safety,
-                    label: "SpO₂",
+                    label: l10n.tr('spo2'),
                     value: h.spo2 > 0 ? "${h.spo2}%" : "—%",
                   ),
                   MetricChip(
                     icon: Icons.directions_walk,
-                    label: "Kroky",
+                    label: l10n.tr('steps'),
                     value: "${h.steps}",
                   ),
                   MetricChip(
                     icon: Icons.self_improvement,
-                    label: "Stres",
-                    value: _stressLevel(h.heartRate),
+                    label: l10n.tr('stress'),
+                    value: _stressLevel(h.heartRate, l10n),
                   ),
                 ],
               ),
@@ -145,14 +148,14 @@ class _HealthScreenState extends State<HealthScreen> {
 
             // Graf tepu
             SectionCard(
-              title: "Tep - história",
+              title: l10n.tr('heart_rate_history'),
               child: SizedBox(
                 height: 180,
                 child: h.heartRateHistory.isEmpty
-                    ? const Center(
+                    ? Center(
                   child: Text(
-                    'Čakám na dáta z hodiniek...',
-                    style: TextStyle(color: Colors.grey),
+                    l10n.tr('waiting_for_data'),
+                    style: const TextStyle(color: Colors.grey),
                   ),
                 )
                     : LineChart(
@@ -205,8 +208,7 @@ class _HealthScreenState extends State<HealthScreen> {
                         dotData: FlDotData(
                           show: true,
                           getDotPainter: (spot, percent, bar, index) {
-                            final isLast =
-                                index == h.heartRateHistory.length - 1;
+                            final isLast = index == h.heartRateHistory.length - 1;
                             return FlDotCirclePainter(
                               radius: isLast ? 5 : 2,
                               color: Colors.redAccent,
@@ -241,14 +243,14 @@ class _HealthScreenState extends State<HealthScreen> {
 
             // Graf SpO2
             SectionCard(
-              title: "SpO₂ - história",
+              title: l10n.tr('spo2_history'),
               child: SizedBox(
                 height: 150,
                 child: h.spo2History.isEmpty
-                    ? const Center(
+                    ? Center(
                   child: Text(
-                    'Čakám na dáta z hodiniek...',
-                    style: TextStyle(color: Colors.grey),
+                    l10n.tr('waiting_for_data'),
+                    style: const TextStyle(color: Colors.grey),
                   ),
                 )
                     : LineChart(
@@ -301,8 +303,7 @@ class _HealthScreenState extends State<HealthScreen> {
                         dotData: FlDotData(
                           show: true,
                           getDotPainter: (spot, percent, bar, index) {
-                            final isLast =
-                                index == h.spo2History.length - 1;
+                            final isLast = index == h.spo2History.length - 1;
                             return FlDotCirclePainter(
                               radius: isLast ? 5 : 2,
                               color: Colors.blueAccent,
@@ -337,19 +338,19 @@ class _HealthScreenState extends State<HealthScreen> {
 
             // Trend bar
             SectionCard(
-              title: "Trend (session)",
+              title: l10n.tr('trend_session'),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    "🡻 min: ${h.minHr > 0 ? '${h.minHr} bpm' : '—'}   "
-                        "🡹 max: ${h.maxHr > 0 ? '${h.maxHr} bpm' : '—'}",
+                    "🡻 ${l10n.tr('min')}: ${h.minHr > 0 ? '${h.minHr} bpm' : '—'}   "
+                        "🡹 ${l10n.tr('max')}: ${h.maxHr > 0 ? '${h.maxHr} bpm' : '—'}",
                   ),
                   const SizedBox(height: 8),
                   LinearProgressIndicator(value: _calcTrendProgress(h)),
                   const SizedBox(height: 4),
                   Text(
-                    'Meraní: ${h.heartRateHistory.length}',
+                    '${l10n.tr('measurements')}: ${h.heartRateHistory.length}',
                     style: TextStyle(
                       fontSize: 12,
                       color: colorScheme.onSurfaceVariant,
@@ -359,7 +360,6 @@ class _HealthScreenState extends State<HealthScreen> {
               ),
             ),
 
-            // Extra padding na spodku pre lepší scroll
             const SizedBox(height: 32),
           ],
         ),

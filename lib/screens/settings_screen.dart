@@ -1,3 +1,5 @@
+// lib/screens/settings_screen.dart
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -6,9 +8,12 @@ import '../widgets/screen_scafold.dart';
 import '../widgets/section_card.dart';
 import '../test_ids.dart';
 import '../services/notifications/android_notif_stream.dart';
+import '../l10n/app_localizations.dart';
+import '../main.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
+
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
@@ -17,23 +22,18 @@ class _SettingsScreenState extends State<SettingsScreen>
     with WidgetsBindingObserver {
   static const _prefsKeyNotif = 'notif_forward_enabled';
 
-  bool notifications = false; // ✅ default OFF
-  bool darkMode = true;
+  bool notifications = false;
   bool autoSync = true;
 
   final _notif = AndroidNotifStream();
-
-  // ✅ DEBUG subscription na notifikácie (z Android EventChannel)
   StreamSubscription<Map<String, dynamic>>? _notifSub;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-
     _loadNotifState();
 
-    // ✅ DEBUG: uvidíš v logu všetky notifikácie ktoré prídu do Flutteru
     _notifSub = _notif.stream.listen(
           (m) => debugPrint('NOTIF EVENT: $m'),
       onError: (e) => debugPrint('NOTIF ERROR: $e'),
@@ -47,7 +47,6 @@ class _SettingsScreenState extends State<SettingsScreen>
     super.dispose();
   }
 
-  // keď sa vrátiš zo Settings (resume), prekontroluj reálny stav
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
@@ -57,11 +56,9 @@ class _SettingsScreenState extends State<SettingsScreen>
 
   Future<void> _loadNotifState() async {
     final prefs = await SharedPreferences.getInstance();
-    final saved = prefs.getBool(_prefsKeyNotif) ?? false; // ✅ default false
+    final saved = prefs.getBool(_prefsKeyNotif) ?? false;
 
     setState(() => notifications = saved);
-
-    // ak user mal zapnuté, ale systémové povolenie nie je, vypni
     await _syncWithSystemPermission();
   }
 
@@ -72,7 +69,6 @@ class _SettingsScreenState extends State<SettingsScreen>
 
       if (!mounted) return;
 
-      // ak systém nepovolil, tak switch musí byť false
       if (!systemEnabled && notifications) {
         setState(() => notifications = false);
         final prefs = await SharedPreferences.getInstance();
@@ -85,28 +81,24 @@ class _SettingsScreenState extends State<SettingsScreen>
 
   Future<void> _toggleNotifications(bool v) async {
     if (!v) {
-      // user vypol -> len uložiť, systémové povolenie nezoberieme
       setState(() => notifications = false);
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_prefsKeyNotif, false);
       return;
     }
 
-    // user zapína -> otvor settings a po návrate sa to samo zosyncuje
     await _notif.openAccessSettings();
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('V nastaveniach povoľ prístup k notifikáciám pre túto appku.'),
+      SnackBar(
+        content: Text(context.tr('enable_notif_access')),
       ),
     );
 
-    // nech switch neklame pred povolením
     setState(() => notifications = false);
   }
 
-  // keď systémové povolenie je ON, tak až vtedy si uložíme true
   Future<void> _applyTrueIfAllowed() async {
     try {
       final ok = await _notif.isAccessEnabled();
@@ -123,48 +115,152 @@ class _SettingsScreenState extends State<SettingsScreen>
     }
   }
 
+  void _showLanguageDialog() {
+    final localeProvider = context.localeProvider;
+    final l10n = context.l10n;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.tr('language')),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: Radio<AppLanguage>(
+                value: AppLanguage.sk,
+                groupValue: localeProvider.language,
+                onChanged: (val) {
+                  if (val != null) {
+                    localeProvider.setLanguage(val);
+                    Navigator.of(ctx).pop();
+                  }
+                },
+              ),
+              title: const Text('🇸🇰 Slovenčina'),
+              onTap: () {
+                localeProvider.setLanguage(AppLanguage.sk);
+                Navigator.of(ctx).pop();
+              },
+            ),
+            ListTile(
+              leading: Radio<AppLanguage>(
+                value: AppLanguage.en,
+                groupValue: localeProvider.language,
+                onChanged: (val) {
+                  if (val != null) {
+                    localeProvider.setLanguage(val);
+                    Navigator.of(ctx).pop();
+                  }
+                },
+              ),
+              title: const Text('🇬🇧 English'),
+              onTap: () {
+                localeProvider.setLanguage(AppLanguage.en);
+                Navigator.of(ctx).pop();
+              },
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: Text(l10n.tr('cancel')),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final localeProvider = context.localeProvider;
+    final themeProvider = context.themeProvider;
+
     return ScreenScaffold(
-      title: "Nastavenia",
+      title: l10n.tr('settings_title'),
       titleKey: TKeys.titleSettings,
-      subtitle: "Aplikácia a hodinky",
+      subtitle: l10n.tr('settings_subtitle'),
       child: ListView(
         children: [
+          // Sekcia Aplikácia
           SectionCard(
-            title: "Aplikácia",
+            title: l10n.tr('app_section'),
             child: Column(
               children: [
+                // ✅ Jednoduchý Dark mode prepínač
                 SwitchListTile(
-                  value: darkMode,
-                  onChanged: (v) => setState(() => darkMode = v),
-                  title: const Text("Tmavý režim"),
+                  value: themeProvider.isDarkMode,
+                  onChanged: (v) {
+                    themeProvider.setDarkMode(v);
+                  },
+                  title: Text(l10n.tr('dark_mode')),
+                  secondary: Icon(
+                    themeProvider.isDarkMode ? Icons.dark_mode : Icons.light_mode,
+                  ),
                 ),
+
+                // Systémové notifikácie
                 SwitchListTile(
                   value: notifications,
                   onChanged: (v) async {
                     await _toggleNotifications(v);
-                    // po návrate zo settings sa to zosyncuje,
-                    // ale keď user povolí rýchlo a vráti sa, toto to hneď aplikuje:
                     await _applyTrueIfAllowed();
                   },
-                  title: const Text("Systémové notifikácie"),
+                  title: Text(l10n.tr('system_notifications')),
+                  secondary: const Icon(Icons.notifications),
+                ),
+
+                // Jazyk
+                ListTile(
+                  leading: const Icon(Icons.language),
+                  title: Text(l10n.tr('language')),
+                  subtitle: Text(localeProvider.languageName),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.primary.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          localeProvider.languageCode,
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      const Icon(Icons.chevron_right),
+                    ],
+                  ),
+                  onTap: _showLanguageDialog,
                 ),
               ],
             ),
           ),
+
+          // Sekcia Synchronizácia
           SectionCard(
-            title: "Synchronizácia",
+            title: l10n.tr('sync_section'),
             child: Column(
               children: [
                 SwitchListTile(
                   value: autoSync,
                   onChanged: (v) => setState(() => autoSync = v),
-                  title: const Text("Automatická synchronizácia"),
+                  title: Text(l10n.tr('auto_sync')),
+                  secondary: const Icon(Icons.sync),
                 ),
                 ListTile(
                   leading: const Icon(Icons.sync),
-                  title: const Text("Manuálna synchronizácia"),
+                  title: Text(l10n.tr('manual_sync')),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () {},
                 ),

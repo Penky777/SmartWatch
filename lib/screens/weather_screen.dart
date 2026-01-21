@@ -1,3 +1,5 @@
+// lib/screens/weather_screen.dart
+
 import 'package:flutter/material.dart';
 import '../widgets/screen_scafold.dart';
 import '../widgets/section_card.dart';
@@ -5,6 +7,7 @@ import '../widgets/section_card.dart';
 import '../Services/weather_service.dart';
 import '../Services/location_service.dart';
 import '../test_ids.dart';
+import '../l10n/app_localizations.dart';
 
 class WeatherScreen extends StatefulWidget {
   const WeatherScreen({super.key});
@@ -37,7 +40,6 @@ class _WeatherScreenState extends State<WeatherScreen> {
     try {
       final pos = await getCurrentPosition();
 
-      // Načítaj oboje paralelne
       final results = await Future.wait([
         _weatherService.getCurrentWeather(pos.latitude, pos.longitude),
         _weatherService.getHourlyForecast(pos.latitude, pos.longitude),
@@ -61,19 +63,28 @@ class _WeatherScreenState extends State<WeatherScreen> {
     }
   }
 
-  /// Ikona podľa OpenWeatherMap icon kódu
   IconData _weatherIcon(String iconCode) {
     switch (iconCode.substring(0, 2)) {
-      case '01': return Icons.wb_sunny;
-      case '02': return Icons.cloud_queue;
-      case '03': return Icons.cloud;
-      case '04': return Icons.cloud;
-      case '09': return Icons.grain;
-      case '10': return Icons.water_drop;
-      case '11': return Icons.thunderstorm;
-      case '13': return Icons.ac_unit;
-      case '50': return Icons.foggy;
-      default: return Icons.cloud_queue;
+      case '01':
+        return Icons.wb_sunny;
+      case '02':
+        return Icons.cloud_queue;
+      case '03':
+        return Icons.cloud;
+      case '04':
+        return Icons.cloud;
+      case '09':
+        return Icons.grain;
+      case '10':
+        return Icons.water_drop;
+      case '11':
+        return Icons.thunderstorm;
+      case '13':
+        return Icons.ac_unit;
+      case '50':
+        return Icons.foggy;
+      default:
+        return Icons.cloud_queue;
     }
   }
 
@@ -95,12 +106,14 @@ class _WeatherScreenState extends State<WeatherScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
+
     final subtitle = (_weather?.cityName.isNotEmpty ?? false)
-        ? '${_weather!.cityName}, dnes'
-        : 'Načítavam...';
+        ? '${_weather!.cityName}, ${l10n.tr('today').toLowerCase()}'
+        : l10n.tr('loading');
 
     return ScreenScaffold(
-      title: "Počasie",
+      title: l10n.tr('weather_title'),
       titleKey: TKeys.titleWeather,
       subtitle: subtitle,
       actions: [
@@ -116,12 +129,12 @@ class _WeatherScreenState extends State<WeatherScreen> {
         child: Column(
           children: [
             SectionCard(
-              title: "Aktuálne",
+              title: l10n.tr('current'),
               child: _buildCurrentWeather(context),
             ),
             SectionCard(
-              title: "Predpoveď",
-              child: _buildHourlyForecast(),
+              title: l10n.tr('forecast'),
+              child: _buildHourlyForecast(context),
             ),
             const SizedBox(height: 32),
           ],
@@ -131,23 +144,25 @@ class _WeatherScreenState extends State<WeatherScreen> {
   }
 
   Widget _buildCurrentWeather(BuildContext context) {
+    final l10n = context.l10n;
+
     if (_loading && _weather == null) {
-      return const Row(
+      return Row(
         children: [
-          SizedBox(
+          const SizedBox(
             width: 20,
             height: 20,
             child: CircularProgressIndicator(strokeWidth: 2),
           ),
-          SizedBox(width: 12),
-          Text("Načítavam počasie…"),
+          const SizedBox(width: 12),
+          Text(l10n.tr('loading_weather')),
         ],
       );
     }
 
     if (_error != null && _weather == null) {
       return Text(
-        "Chyba: $_error",
+        "${l10n.tr('error')}: $_error",
         key: TKeys.weatherLocationError,
         style: TextStyle(
           color: Theme.of(context).colorScheme.error,
@@ -156,7 +171,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
     }
 
     if (_weather == null) {
-      return const Text("Počasie nie je k dispozícii");
+      return Text(l10n.tr('weather_unavailable'));
     }
 
     return Column(
@@ -170,7 +185,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
             ),
             const Spacer(),
             Text(
-              "Pocitovo ${_weather!.feelsLike.toStringAsFixed(1)}°C",
+              "${l10n.tr('feels_like')} ${_weather!.feelsLike.toStringAsFixed(1)}°C",
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ],
@@ -191,7 +206,9 @@ class _WeatherScreenState extends State<WeatherScreen> {
     );
   }
 
-  Widget _buildHourlyForecast() {
+  Widget _buildHourlyForecast(BuildContext context) {
+    final l10n = context.l10n;
+
     if (_loading && _hourly.isEmpty) {
       return const Center(
         child: Padding(
@@ -202,7 +219,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
     }
 
     if (_hourly.isEmpty) {
-      return const Text("Predpoveď nie je k dispozícii");
+      return Text(l10n.tr('forecast_unavailable'));
     }
 
     return SingleChildScrollView(
