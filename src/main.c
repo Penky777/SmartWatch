@@ -670,11 +670,10 @@ if (max_err != ESP_OK) {
     log_heap_stats("after UI manager init");
     check_heap_integrity("after UI init");
     
-    // Initialize Bluetooth
+    // Initialize Bluetooth (leave disabled until user toggles in Settings)
     ESP_LOGI(TAG, "Initializing Bluetooth...");
     log_heap_stats("before BLE init");
     bluetooth_init();
-    bluetooth_enable();
     log_heap_stats("after BLE init");
     
     // Create MAX30102 background task
