@@ -3,6 +3,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_reactive_ble/flutter_reactive_ble.dart' hide BleStatus;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../di.dart';
 import 'ble_repository.dart';
@@ -10,7 +11,7 @@ import '../widgets/app_scaffold.dart';
 import '../widgets/status_badge.dart';
 import '../test_ids.dart';
 import 'ble_foreground_service.dart';
-import 'ble_permissions.dart'; // ✅ PRIDANÉ
+import 'ble_permissions.dart';
 
 class BleScreen extends StatefulWidget {
   const BleScreen({super.key});
@@ -23,51 +24,29 @@ class _BleScreenState extends State<BleScreen> {
   late final BleRepository repo;
 
   StreamSubscription<DiscoveredDevice>? _scanStreamSub;
-  StreamSubscription<BleStatus>? _statusSub;
   StreamSubscription<String>? _pairingSub;
   StreamSubscription<String>? _consoleSub;
 
-  // ✅ paired status
-  StreamSubscription<bool>? _pairedSub;
-  bool _isPaired = false;
-
   final List<DiscoveredDevice> _devices = [];
-  BleStatus _status = BleStatus.idle;
-
   final List<String> _consoleLines = [];
   final TextEditingController _sendCtrl = TextEditingController();
+
+  // ✅ Uložené zariadenie (z minulého pripojenia)
+  String? _savedDeviceId;
+  String? _savedDeviceName;
 
   @override
   void initState() {
     super.initState();
 
     repo = getIt<BleRepository>();
-    _status = repo.currentStatus;
-    _isPaired = repo.isPaired;
 
-    // ✅ načítaj pairing flag pre hodinky hneď po otvorení obrazovky
-    repo.loadPairedForWatch().then((v) {
-      if (!mounted) return;
-      setState(() => _isPaired = v);
-    });
-
-    // ✅ počúvaj zmeny pairing stavu (confirm/reject)
-    _pairedSub = repo.pairedStatus.listen((v) {
-      if (!mounted) return;
-      setState(() => _isPaired = v);
-    });
-
-    _statusSub = repo.status.listen((s) async {
-      if (!mounted) return;
-      setState(() => _status = s);
-      if (s == BleStatus.connected) {
-        await startBleService();
-      }
-    });
-
-    // scan results
+    // Scan results - filter iba naše hodinky
     _scanStreamSub = repo.scannedDevices.listen((d) {
       if (!mounted) return;
+
+      // ✅ Filter podľa mena hodiniek
+      if (!d.name.toLowerCase().contains('smartwatch')) return;
 
       final i = _devices.indexWhere((x) => x.id == d.id);
       setState(() {
@@ -79,6 +58,7 @@ class _BleScreenState extends State<BleScreen> {
       });
     });
 
+    // Console history
     _consoleLines
       ..clear()
       ..addAll(repo.consoleHistory);
@@ -91,6 +71,7 @@ class _BleScreenState extends State<BleScreen> {
       });
     });
 
+    // Pairing PIN dialóg
     _pairingSub = repo.pairingPins.listen((pin) async {
       if (!mounted) return;
 
@@ -104,13 +85,41 @@ class _BleScreenState extends State<BleScreen> {
       }
     });
 
-    // ✅ OPRAVA: Spusti scan s kontrolou permissions
-    if (_status != BleStatus.connected) {
+    // Pri štarte načítaj uložené zariadenie (nepripája sa automaticky)
+    _loadSavedDevice();
+
+    // Spusti scan IBA ak nie sme connected
+    if (repo.currentStatus != BleStatus.connected) {
       _initScan();
     }
   }
 
-  // ✅ NOVÁ METÓDA: Kontrola permissions pred prvým scanom
+  /// Načíta uložené zariadenie z minulého pripojenia
+  Future<void> _loadSavedDevice() async {
+    final prefs = await SharedPreferences.getInstance();
+    final lastId = prefs.getString(BleRepository.kWatchId);
+    final lastName = prefs.getString('ble_last_device_name');
+
+    if (lastId != null && lastId.isNotEmpty) {
+      setState(() {
+        _savedDeviceId = lastId;
+        _savedDeviceName = lastName ?? 'SmartWatch';
+      });
+      debugPrint('Loaded saved device: $lastId ($lastName)');
+    }
+  }
+
+  /// Uloží zariadenie po úspešnom pripojení
+  Future<void> _saveDevice(String id, String name) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(BleRepository.kWatchId, id);
+    await prefs.setString('ble_last_device_name', name);
+    setState(() {
+      _savedDeviceId = id;
+      _savedDeviceName = name;
+    });
+  }
+
   Future<void> _initScan() async {
     final granted = await ensureBlePermissions();
     if (!mounted) return;
@@ -122,7 +131,6 @@ class _BleScreenState extends State<BleScreen> {
     }
   }
 
-  // ✅ NOVÁ METÓDA: Scan s kontrolou permissions (pre tlačidlo Hľadať)
   Future<void> _startScanWithPermissions() async {
     final granted = await ensureBlePermissions();
     if (!mounted) return;
@@ -140,7 +148,6 @@ class _BleScreenState extends State<BleScreen> {
     setState(() {});
   }
 
-  // ✅ NOVÁ METÓDA: Snackbar pre odmietnuté povolenia
   void _showPermissionDeniedSnackbar() {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
@@ -153,10 +160,8 @@ class _BleScreenState extends State<BleScreen> {
   @override
   void dispose() {
     _scanStreamSub?.cancel();
-    _statusSub?.cancel();
     _pairingSub?.cancel();
     _consoleSub?.cancel();
-    _pairedSub?.cancel();
     _sendCtrl.dispose();
     super.dispose();
   }
@@ -214,13 +219,39 @@ class _BleScreenState extends State<BleScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // ✅ StreamBuilder pre status - vždy aktuálny!
+    return StreamBuilder<BleStatus>(
+      stream: repo.status,
+      initialData: repo.currentStatus,
+      builder: (context, statusSnapshot) {
+        final status = statusSnapshot.data ?? BleStatus.idle;
+
+        // ✅ StreamBuilder pre pairing status
+        return StreamBuilder<bool>(
+          stream: repo.pairedStatus,
+          initialData: repo.isPaired,
+          builder: (context, pairedSnapshot) {
+            final isPaired = pairedSnapshot.data ?? false;
+
+            return _buildScreen(context, status, isPaired);
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildScreen(BuildContext context, BleStatus status, bool isPaired) {
+    // Status badge
     Widget badge;
-    switch (_status) {
+    switch (status) {
       case BleStatus.connecting:
         badge = const StatusBadge.connecting();
         break;
       case BleStatus.connected:
         badge = const StatusBadge.connected();
+        break;
+      case BleStatus.scanning:
+        badge = const StatusBadge.custom(text: 'Skenujem...', color: Colors.blue);
         break;
       default:
         badge = const StatusBadge.disconnected();
@@ -228,8 +259,8 @@ class _BleScreenState extends State<BleScreen> {
     }
 
     final pairingChip = Chip(
-      label: Text(_isPaired ? 'Spárované' : 'Nespárované'),
-      avatar: Icon(_isPaired ? Icons.verified : Icons.link_off, size: 18),
+      label: Text(isPaired ? 'Spárované' : 'Nespárované'),
+      avatar: Icon(isPaired ? Icons.verified : Icons.link_off, size: 18),
     );
 
     return AppScaffold(
@@ -245,15 +276,21 @@ class _BleScreenState extends State<BleScreen> {
         children: [
           const SizedBox(height: 8),
 
+          // Tlačidlá
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               ElevatedButton.icon(
                 key: TKeys.bleBtnSearch,
-                // ✅ OPRAVA: Volá metódu s kontrolou permissions
-                onPressed: _startScanWithPermissions,
-                icon: const Icon(Icons.search),
-                label: const Text('Hľadať'),
+                onPressed: status == BleStatus.scanning ? null : _startScanWithPermissions,
+                icon: status == BleStatus.scanning
+                    ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+                    : const Icon(Icons.search),
+                label: Text(status == BleStatus.scanning ? 'Hľadám...' : 'Hľadať'),
               ),
               const SizedBox(width: 12),
               OutlinedButton.icon(
@@ -264,7 +301,7 @@ class _BleScreenState extends State<BleScreen> {
               ),
               const SizedBox(width: 12),
               OutlinedButton.icon(
-                onPressed: repo.disconnect,
+                onPressed: status == BleStatus.connected ? repo.disconnect : null,
                 icon: const Icon(Icons.link_off),
                 label: const Text('Odpojiť'),
               ),
@@ -273,6 +310,7 @@ class _BleScreenState extends State<BleScreen> {
 
           const SizedBox(height: 8),
 
+          // Pairing info
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
@@ -287,40 +325,145 @@ class _BleScreenState extends State<BleScreen> {
 
           const Divider(),
 
+          // Zoznam zariadení
           Expanded(
             flex: 4,
-            child: _devices.isEmpty
-                ? const Center(
-              child: Text('Žiadne zariadenia.', key: TKeys.bleEmptyText),
-            )
-                : ListView.builder(
-              itemCount: _devices.length,
-              itemBuilder: (context, i) {
-                final d = _devices[i];
-                return ListTile(
-                  leading: const Icon(Icons.watch),
-                  title: Text(d.name.isEmpty ? 'Naše hodinky' : d.name),
-                  subtitle: Text('ID: ${d.id}\nRSSI: ${d.rssi}'),
-                  isThreeLine: true,
-                  trailing: _isPaired
-                      ? const Chip(label: Text('Spárované'))
-                      : const Chip(label: Text('Nespárované')),
-                  onTap: () => repo.connect(d.id),
-                );
-              },
-            ),
+            child: _buildDeviceList(status, isPaired),
           ),
 
           const Divider(),
 
-          Expanded(
-            flex: 3,
-            child: _buildConsole(context),
-          ),
-
-          _buildInputBar(),
+          // TODO: Konzola je zakomentovaná
+          // const Divider(),
+          // Expanded(
+          //   flex: 3,
+          //   child: _buildConsole(context),
+          // ),
+          // _buildInputBar(status),
         ],
       ),
+    );
+  }
+
+  /// Zoznam zariadení - uložené + naskenované + connected
+  Widget _buildDeviceList(BleStatus status, bool isPaired) {
+    // Zozbieraj všetky zariadenia na zobrazenie
+    final List<_DeviceItem> items = [];
+
+    // ID aktuálne pripojeného zariadenia
+    final connectedId = repo.deviceId;
+
+    // 1. Ak sme connected, pridaj pripojené zariadenie ako prvé
+    if (status == BleStatus.connected && connectedId != null) {
+      final inScanned = _devices.any((d) => d.id == connectedId);
+      if (!inScanned) {
+        // Pripojené zariadenie nie je v scane - pridaj ho
+        items.add(_DeviceItem(
+          id: connectedId,
+          name: _savedDeviceName ?? 'SmartWatch',
+          rssi: null,
+          isSaved: connectedId == _savedDeviceId,
+          isConnected: true,
+        ));
+      }
+    }
+
+    // 2. Pridaj uložené zariadenie (ak nie je už pridané a nie je v _devices)
+    if (_savedDeviceId != null && _savedDeviceId != connectedId) {
+      final inScanned = _devices.any((d) => d.id == _savedDeviceId);
+      if (!inScanned) {
+        items.add(_DeviceItem(
+          id: _savedDeviceId!,
+          name: _savedDeviceName ?? 'SmartWatch',
+          rssi: null, // nie je v dosahu
+          isSaved: true,
+        ));
+      }
+    }
+
+    // 3. Pridaj naskenované zariadenia
+    for (final d in _devices) {
+      items.add(_DeviceItem(
+        id: d.id,
+        name: d.name.isEmpty ? 'SmartWatch' : d.name,
+        rssi: d.rssi,
+        isSaved: d.id == _savedDeviceId,
+        isConnected: status == BleStatus.connected && d.id == connectedId,
+      ));
+    }
+
+    // Prázdny stav
+    if (items.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Žiadne zariadenia.', key: TKeys.bleEmptyText),
+            if (status == BleStatus.scanning) ...[
+              const SizedBox(height: 16),
+              const CircularProgressIndicator(),
+            ],
+          ],
+        ),
+      );
+    }
+
+    return ListView.builder(
+      itemCount: items.length,
+      itemBuilder: (context, i) {
+        final item = items[i];
+        final isConnected = item.isConnected ||
+            (status == BleStatus.connected && repo.deviceId == item.id);
+        final isConnecting = status == BleStatus.connecting && repo.deviceId == item.id;
+
+        return ListTile(
+          leading: Icon(
+            Icons.watch,
+            color: isConnected
+                ? Colors.green
+                : item.isSaved
+                ? Colors.blue
+                : null,
+          ),
+          title: Row(
+            children: [
+              Text(item.name),
+              if (item.isSaved) ...[
+                const SizedBox(width: 8),
+                const Icon(Icons.star, size: 16, color: Colors.amber),
+              ],
+            ],
+          ),
+          subtitle: Text(
+            isConnected
+                ? 'Pripojené'
+                : item.rssi != null
+                ? 'RSSI: ${item.rssi} dBm'
+                : 'Uložené zariadenie (nie je v dosahu)',
+          ),
+          trailing: isConnected
+              ? const Chip(
+            label: Text('Pripojené'),
+            backgroundColor: Colors.green,
+          )
+              : isConnecting
+              ? const SizedBox(
+            width: 24,
+            height: 24,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          )
+              : item.isSaved
+              ? const Chip(label: Text('Uložené'))
+              : const Icon(Icons.chevron_right),
+          onTap: (isConnected || isConnecting)
+              ? null
+              : () {
+            // Pripoj sa a ulož zariadenie
+            repo.connect(item.id);
+            _saveDevice(item.id, item.name);
+          },
+        );
+      },
     );
   }
 
@@ -349,7 +492,9 @@ class _BleScreenState extends State<BleScreen> {
     );
   }
 
-  Widget _buildInputBar() {
+  Widget _buildInputBar(BleStatus status) {
+    final canSend = status == BleStatus.connected;
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
       child: Row(
@@ -357,17 +502,18 @@ class _BleScreenState extends State<BleScreen> {
           Expanded(
             child: TextField(
               controller: _sendCtrl,
-              decoration: const InputDecoration(
-                hintText: 'Správa pre hodinky…',
-                border: OutlineInputBorder(),
+              enabled: canSend,
+              decoration: InputDecoration(
+                hintText: canSend ? 'Správa pre hodinky…' : 'Najprv sa pripoj...',
+                border: const OutlineInputBorder(),
                 isDense: true,
               ),
-              onSubmitted: _send,
+              onSubmitted: canSend ? _send : null,
             ),
           ),
           const SizedBox(width: 8),
           ElevatedButton.icon(
-            onPressed: () => _send(_sendCtrl.text),
+            onPressed: canSend ? () => _send(_sendCtrl.text) : null,
             icon: const Icon(Icons.send),
             label: const Text('Poslať'),
           ),
@@ -382,4 +528,21 @@ class _BleScreenState extends State<BleScreen> {
     _sendCtrl.clear();
     repo.sendString(t);
   }
+}
+
+/// Helper trieda pre zobrazenie zariadenia v liste
+class _DeviceItem {
+  final String id;
+  final String name;
+  final int? rssi;
+  final bool isSaved;
+  final bool isConnected;
+
+  _DeviceItem({
+    required this.id,
+    required this.name,
+    this.rssi,
+    this.isSaved = false,
+    this.isConnected = false,
+  });
 }
