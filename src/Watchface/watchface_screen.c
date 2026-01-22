@@ -77,7 +77,7 @@ lv_obj_t *build_watchface_screen(void)
     lv_obj_align(date_label, LV_ALIGN_OUT_TOP_MID,60,60);
     
     
-    // Tap to menu
+    // Tap to menu (wake tap is ignored by 300ms guard window)
     lv_obj_add_event_cb(scr, screen_tap_event_cb, LV_EVENT_RELEASED, NULL);
 
     lv_obj_add_event(scr,swipe_to_alerts_event_cb,LV_EVENT_GESTURE,NULL);

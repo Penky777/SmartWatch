@@ -8,6 +8,7 @@
 
 // ---------- Forward declarations ----------
 lv_obj_t *build_menu_screen(void);
+static void menu_gesture_event_cb(lv_event_t *e);
 
 // ---------- Event callbacks  ----------
 static void calendar_btn_event_cb(lv_event_t *e) { (void)e; ui_show_calendar(); }
@@ -74,6 +75,9 @@ lv_obj_t *build_menu_screen(void) {
     lv_obj_set_style_text_color(menu_lbl, lv_color_white(), 0);
     lv_obj_set_style_text_font(menu_lbl, &lv_font_montserrat_28, 0);
 
+    // Swipe left-to-right to return to watchface
+    lv_obj_add_event(menu_scr, menu_gesture_event_cb, LV_EVENT_GESTURE, NULL);
+
     create_menu_button(menu_scr, &Calendar, "Calendar", calendar_btn_event_cb);
     create_menu_button(menu_scr, &Activity, "Activity", activity_btn_event_cb);
     create_menu_button(menu_scr, &Settings, "Settings", settings_btn_event_cb);
@@ -82,4 +86,14 @@ lv_obj_t *build_menu_screen(void) {
 
     lv_obj_scroll_to_y(menu_scr, 0, LV_ANIM_OFF);
     return menu_scr;
+}
+
+// Gesture handler for the menu screen: left-to-right goes back to watchface
+static void menu_gesture_event_cb(lv_event_t *e) {
+    lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_get_act());
+    if (dir == LV_DIR_RIGHT) {
+        lv_event_stop_processing(e);  // Stop event from propagating to children
+        lv_indev_reset(lv_indev_get_act(), NULL);  // Clear input state to prevent phantom clicks
+        ui_show_watchface();
+    }
 }

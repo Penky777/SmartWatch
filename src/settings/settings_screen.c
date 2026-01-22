@@ -47,7 +47,7 @@ static lv_obj_t* create_row(lv_obj_t *parent, const char *title,
 
     // Make row clickable if callback provided
     if (cb) {
-        lv_obj_add_event_cb(row, cb, LV_EVENT_PRESSED, NULL);
+        lv_obj_add_event_cb(row, cb, LV_EVENT_CLICKED, NULL);
     }
 
     return row;
@@ -76,7 +76,10 @@ static void brightness_row_event_cb(lv_event_t *e)
 static void settings_swipe_event_cb(lv_event_t *e)
 {
     if (lv_event_get_code(e) == LV_EVENT_GESTURE) {
-        if (lv_indev_get_gesture_dir(lv_indev_get_act()) == LV_DIR_RIGHT) {
+        lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_get_act());
+        if (dir == LV_DIR_RIGHT) {
+            lv_event_stop_processing(e);  // Stop event from propagating to children
+            lv_indev_reset(lv_indev_get_act(), NULL);  // Clear input state to prevent phantom clicks
             ui_show_menu();
         }
     }

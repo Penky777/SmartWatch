@@ -56,6 +56,12 @@ static void log_heap(const char *ctx) {
 }
 
 static void push_screen_history(lv_obj_t *screen) {
+    // Only push if it's different from the last entry (avoid duplicates)
+    if (screen_history_count > 0 && screen_history[screen_history_count - 1] == screen) {
+        ESP_LOGD(TAG, "Skipping duplicate screen in history");
+        return;
+    }
+    
     if (screen_history_count < MAX_SCREEN_HISTORY) {
         screen_history[screen_history_count++] = screen;
         ESP_LOGD(TAG, "Screen history: %d screens", screen_history_count);
@@ -134,6 +140,16 @@ static void switch_screen(lv_obj_t **cache, lv_obj_t *(*builder)(void), const ch
     
     
     if (current_screen != NULL && current_screen != *cache) {
+        // Check if the screen we're going TO is already in history
+        // If so, trim history to remove it (prevents re-adding it)
+        for (int i = 0; i < screen_history_count; i++) {
+            if (screen_history[i] == *cache) {
+                ESP_LOGI(TAG, "Screen already in history at position %d, trimming", i);
+                screen_history_count = i;
+                break;
+            }
+        }
+        
         // Notify current screen it's being hidden
         if (current_screen == screen_activity) {
             activity_screen_on_hide();

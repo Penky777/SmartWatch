@@ -76,6 +76,12 @@ static QueueHandle_t touch_evt_queue = NULL;
 static SemaphoreHandle_t gui_mutex = NULL;
 static lv_indev_t *indev_touch = NULL;
 
+// When the screen sleeps, schedule a return to watchface after a short delay
+static bool s_pending_watchface_reset = false;
+static uint32_t s_sleep_start_ms = 0;
+// Ignore taps for a brief window right after wake so the wake tap doesn't trigger UI
+static uint32_t s_ignore_touch_until_ms = 0;
+
 uint32_t g_last_activity_ms = 0;
 bool g_backlight_on = true;
 uint8_t g_backlight_level = 100;
@@ -231,19 +237,28 @@ static void lvgl_tick_cb(void *arg) {
 static void lvgl_touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
     (void)indev;
     
+    uint32_t now = lv_tick_get();
+
+    // Suppress touches right after wake so the wake tap doesn't activate UI
+    if (now < s_ignore_touch_until_ms) {
+        data->state = LV_INDEV_STATE_RELEASED;
+        data->continue_reading = false;
+        return;
+    }
+
     data->state = s_last_touch.pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
     data->point.x = s_last_touch.x;
     data->point.y = s_last_touch.y;
     data->continue_reading = false;
 
     if (data->state == LV_INDEV_STATE_PRESSED) {
-    
         if (bsp_pwr_is_screen_sleeping()) {
             bsp_pwr_wake_screen();
+            s_ignore_touch_until_ms = now + 300;  // 300ms guard so wake tap is ignored
+            data->state = LV_INDEV_STATE_RELEASED;
             return;  // Don't process this touch, just wake
         }
-        
-        g_last_activity_ms = lv_tick_get();
+        g_last_activity_ms = now;
     }
 }
 
@@ -266,6 +281,13 @@ static esp_err_t cst816_add_device(void) {
         .scl_speed_hz = 400000,
     };
     return i2c_master_bus_add_device(g_i2c_bus, &dev_cfg, &g_touch_dev);
+}
+
+static void sleep_screen_and_schedule_watchface(void) {
+    // Put the screen to sleep and queue a switch back to watchface after 3 seconds
+    bsp_pwr_sleep_screen();
+    s_sleep_start_ms = lv_tick_get();
+    s_pending_watchface_reset = true;
 }
 
 static esp_err_t cst816_probe_id(uint8_t *out_id) {
@@ -411,7 +433,7 @@ static void monitor_task(void *arg) {
             now - g_last_activity_ms > SCREEN_TIMEOUT_MS) {
             
             ESP_LOGI(TAG, "Inactivity timeout → Auto-sleep");
-            bsp_pwr_sleep_screen();
+            sleep_screen_and_schedule_watchface();
         }
         
         vTaskDelay(pdMS_TO_TICKS(500));
@@ -505,6 +527,7 @@ static esp_err_t lvgl_init(void) {
     indev_touch = lv_indev_create();
     lv_indev_set_type(indev_touch, LV_INDEV_TYPE_POINTER);
     lv_indev_set_read_cb(indev_touch, lvgl_touch_read_cb);
+    lv_indev_set_long_press_time(indev_touch, 300);  // Require 1s hold for long-press actions
 
     // Start LVGL tick timer
     const esp_timer_create_args_t tick_args = {
@@ -724,7 +747,7 @@ if (max_err != ESP_OK) {
                     g_last_activity_ms = lv_tick_get();
                 } else {
                     ESP_LOGI(TAG, "→ On main screen, sleeping");
-                    bsp_pwr_sleep_screen();
+                    sleep_screen_and_schedule_watchface();
                 }
                 break;
             
@@ -765,11 +788,23 @@ if (max_err != ESP_OK) {
         }
         
         uint32_t now = lv_tick_get();
+
+        // If we put the screen to sleep, after 3s switch UI back to watchface
+        if (s_pending_watchface_reset) {
+            if (!bsp_pwr_is_screen_sleeping()) {
+                s_pending_watchface_reset = false;  // Cancel if user woke early
+            } else if (now - s_sleep_start_ms >= 3000) {
+                gui_lock();
+                ui_show_watchface();
+                gui_unlock();
+                s_pending_watchface_reset = false;
+            }
+        }
         
         // Screen timeout check
         if (g_backlight_on && now - g_last_activity_ms > SCREEN_TIMEOUT_MS) {
             ESP_LOGI(TAG, "Screen timeout");
-            bsp_pwr_sleep_screen();  
+            sleep_screen_and_schedule_watchface();  
         }
         
         
