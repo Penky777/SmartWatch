@@ -21,6 +21,7 @@
 #include "../comm_mng/comm_manager.h"
 #include "../Bsp_qmi/bsp_qmi8658.h"
 #include "../Ui_manager/ui_manager.h"
+#include "../Max30102/max30102.h"
 #include "gui.h"
 
 static const char *TAG = "BLE_C6";
@@ -98,17 +99,22 @@ static void bt_test_timer_callback(TimerHandle_t xTimer)
     if (!ble_enabled || !connected || !pairing_confirmed || bt_tx_val_handle == 0) return;
     
     bt_test_counter++;
-    // Generate mock heart rate data (60-100 BPM)
-    int mock_hr = 60 + (bt_test_counter % 41);  // Cycles through 60-100
+    
+    // Get actual heart rate and SpO2 from MAX30102 sensor
+    uint8_t spo2 = 0, heart_rate = 0;
+    esp_err_t ret = max_read(&spo2, &heart_rate);
+    
+    // If sensor read fails, use 0 (invalid) instead of mock data
+    if (ret != ESP_OK) {
+        heart_rate = 0;
+        spo2 = 0;
+    }
     
     // Get current steps
     uint32_t steps = bsp_qmi8658_get_software_steps();
     
-    // Demo SpO2 (98%)
-    int spo2 = 98;
-    
     char json_msg[128];
-    snprintf(json_msg, sizeof(json_msg), "{\"heartRate\":%d,\"steps\":%lu,\"spo2\":%d}\n", mock_hr, steps, spo2);
+    snprintf(json_msg, sizeof(json_msg), "{\"heartRate\":%u,\"steps\":%lu,\"spo2\":%u}\n", heart_rate, steps, spo2);
     bluetooth_send_bytes((const uint8_t *)json_msg, strlen(json_msg));
     ESP_LOGI(TAG, "TX -> Phone: %s", json_msg);
 }

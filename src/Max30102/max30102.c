@@ -46,9 +46,9 @@ static uint32_t buffer_index = 0;
 static uint32_t samples_collected = 0;
 
 // Peak detection for heart rate
-#define MIN_PEAK_DISTANCE 25  // Minimum samples between peaks (~250ms at 100Hz)
+#define MIN_PEAK_DISTANCE 30  // Minimum samples between peaks (~300ms at 100Hz) to avoid double-detects
 #define PEAK_THRESHOLD 5000   // Minimum IR value to consider valid signal
-#define DC_THRESHOLD 50000    // Minimum DC component for valid signal
+#define DC_THRESHOLD 40000    // Reduced threshold for detecting valid finger placement (was 50000)
 #define FINGER_DETECTION_LIMIT 20  // Samples without valid signal before assuming no finger
 
 // High-pass filter for AC component extraction
@@ -140,14 +140,18 @@ static esp_err_t max_configure(void) {
     // Bits: [6:4] = sample rate (010 = 100Hz), [1:0] = ADC range (00 = 2048, 01 = 4096, 10 = 8192, 11 = 16384)
     // Bits: [8:7] = LED pulse width (00 = 69us, 01 = 118us, 10 = 215us, 11 = 411us)
     max_write_reg(MAX30102_REG_SPO2_CONFIG, 0x47);  // 100Hz, 411us, 4096
+
+    // FIFO averaging: increase to 8 samples in hardware to reduce noise (0x08 = FIFO config)
+    // Bits [7:5] = sample averaging; 0x02 -> 8 samples
+    max_write_reg(0x08, 0x40);  // AVG=8 samples, AFULL threshold default
     
-    // LED currents: Start at moderate level (15mA each for good signal)
+    // LED currents: Start at higher level for stronger signal (20mA each for robust readings)
     // Register format: [7:0] = LED current in 0.2mA steps
-    // 15mA = 75 steps = 0x4B
-    max_write_reg(MAX30102_REG_LED1_PA, 0x4B);  // Red LED
-    max_write_reg(MAX30102_REG_LED2_PA, 0x4B);  // IR LED
+    // 20mA = 100 steps = 0x64
+    max_write_reg(MAX30102_REG_LED1_PA, 0x64);  // Red LED - 20mA
+    max_write_reg(MAX30102_REG_LED2_PA, 0x64);  // IR LED - 20mA
     
-    ESP_LOGI(TAG, "Sensor configured with 100Hz sampling, 15mA LED current");
+    ESP_LOGI(TAG, "Sensor configured with 100Hz sampling, 20mA LED current (increased for better signal)");
     return ESP_OK;
 }
 
@@ -188,7 +192,14 @@ static bool detect_peak_ac(float current_ac, float *prev_ac, float *prev_prev_ac
     // Detect peak on AC signal: current > prev AND prev > prev_prev (local maximum)
     // This finds the systolic peaks in the heartbeat waveform
     // Use adaptive threshold based on signal amplitude (works for both moving and stationary)
-    float peak_threshold = (amplitude > 0) ? amplitude * 0.3f : 50.0f;  // 30% of amplitude or 50 for weak signals
+    // Require a minimum absolute AC amplitude to avoid noise peaks
+    if (amplitude < 150) {
+        *prev_prev_ac = *prev_ac;
+        *prev_ac = current_ac;
+        return false;
+    }
+
+    float peak_threshold = (amplitude > 0) ? amplitude * 0.4f : 60.0f;  // 40% of amplitude or 60 for weak signals
     
     bool is_peak = (*prev_ac > *prev_prev_ac) && 
                    (*prev_ac > current_ac) && 
@@ -442,6 +453,51 @@ void max_stop(void) {
     ESP_LOGI(TAG, "Measurement stopped");
 }
 
+// ==================== HR SMOOTHING ====================
+#define HR_SMOOTH_LEN 7
+static uint8_t hr_history[HR_SMOOTH_LEN] = {0};
+static int hr_hist_count = 0;
+static int hr_hist_idx = 0;
+static uint8_t hr_candidate = 0;
+static int hr_candidate_count = 0;
+
+static uint8_t compute_median(const uint8_t *vals, int n) {
+    uint8_t tmp[HR_SMOOTH_LEN];
+    for (int i = 0; i < n; i++) tmp[i] = vals[i];
+    // simple insertion sort
+    for (int i = 1; i < n; i++) {
+        uint8_t key = tmp[i];
+        int j = i - 1;
+        while (j >= 0 && tmp[j] > key) {
+            tmp[j + 1] = tmp[j];
+            j--;
+        }
+        tmp[j + 1] = key;
+    }
+    return tmp[n / 2];
+}
+
+// Smooth HR: median over last few beats, and rate-limit large jumps
+static uint8_t smooth_hr(uint8_t hr_raw) {
+    if (hr_raw == 0) return 0;
+
+    hr_history[hr_hist_idx] = hr_raw;
+    hr_hist_idx = (hr_hist_idx + 1) % HR_SMOOTH_LEN;
+    if (hr_hist_count < HR_SMOOTH_LEN) hr_hist_count++;
+
+    uint8_t med = compute_median(hr_history, hr_hist_count);
+
+    // Rate limit big jumps to reduce jitter
+    if (g_last_heart_rate > 0) {
+        int diff = (med > g_last_heart_rate) ? (med - g_last_heart_rate) : (g_last_heart_rate - med);
+        if (diff > 25 && hr_hist_count == HR_SMOOTH_LEN) {
+            // Stronger damping: blend 85% old, 15% new to step toward change
+            med = (uint8_t)((g_last_heart_rate * 85 + med * 15) / 100);
+        }
+    }
+    return med;
+}
+
 esp_err_t max_read(uint8_t *spo2, uint8_t *heart_rate) {
     if (!spo2 || !heart_rate) return ESP_ERR_INVALID_ARG;
     if (!initialized || !running) {
@@ -489,8 +545,38 @@ static void max_task(void *arg) {
                     g_last_spo2 = spo2;
                 }
                 if (hr > 0) {
-                    g_last_heart_rate = hr;
+                    // Reject single outliers that jump too far from current value
+                    if (g_last_heart_rate > 0) {
+                        int diff_raw = (hr > g_last_heart_rate) ? (hr - g_last_heart_rate) : (g_last_heart_rate - hr);
+                        if (diff_raw > 40 && hr_hist_count == HR_SMOOTH_LEN) {
+                            // Require two consecutive consistent readings near the new value
+                            if (hr_candidate == 0 || abs(hr - hr_candidate) > 10) {
+                                hr_candidate = hr;
+                                hr_candidate_count = 1;
+                                goto hr_done;
+                            } else {
+                                hr_candidate_count++;
+                                if (hr_candidate_count < 2) {
+                                    goto hr_done;
+                                }
+                                hr_candidate_count = 0;
+                                hr_candidate = 0;
+                            }
+                        } else {
+                            hr_candidate = 0;
+                            hr_candidate_count = 0;
+                        }
+                    }
+
+                    // Smooth and then low-pass filter to further stabilize
+                    uint8_t hr_s = smooth_hr(hr);
+                    if (g_last_heart_rate == 0) {
+                        g_last_heart_rate = hr_s;
+                    } else {
+                        g_last_heart_rate = (uint8_t)((g_last_heart_rate * 85 + hr_s * 15) / 100);
+                    }
                 }
+hr_done:
                 
                 update_count++;
                 if ((update_count % 50) == 0) {
