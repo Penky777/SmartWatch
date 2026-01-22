@@ -9,7 +9,7 @@ import '../widgets/section_card.dart';
 import '../test_ids.dart';
 import '../services/notifications/android_notif_stream.dart';
 import '../l10n/app_localizations.dart';
-import '../main.dart';
+import '../providers/provider_extensions.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -116,8 +116,10 @@ class _SettingsScreenState extends State<SettingsScreen>
   }
 
   void _showLanguageDialog() {
-    final localeProvider = context.localeProvider;
-    final l10n = context.l10n;
+    // ✅ DÔLEŽITÉ: Použiť Read verzie v event handleroch!
+    final localeProvider = context.localeProviderRead;
+    final currentLang = localeProvider.language;
+    final l10n = AppLocalizations(currentLang);
 
     showDialog(
       context: context,
@@ -129,7 +131,7 @@ class _SettingsScreenState extends State<SettingsScreen>
             ListTile(
               leading: Radio<AppLanguage>(
                 value: AppLanguage.sk,
-                groupValue: localeProvider.language,
+                groupValue: currentLang,
                 onChanged: (val) {
                   if (val != null) {
                     localeProvider.setLanguage(val);
@@ -137,7 +139,7 @@ class _SettingsScreenState extends State<SettingsScreen>
                   }
                 },
               ),
-              title: const Text('🇸🇰 Slovenčina'),
+              title: Text('🇸🇰 ${l10n.tr('language_slovak')}'),
               onTap: () {
                 localeProvider.setLanguage(AppLanguage.sk);
                 Navigator.of(ctx).pop();
@@ -146,7 +148,7 @@ class _SettingsScreenState extends State<SettingsScreen>
             ListTile(
               leading: Radio<AppLanguage>(
                 value: AppLanguage.en,
-                groupValue: localeProvider.language,
+                groupValue: currentLang,
                 onChanged: (val) {
                   if (val != null) {
                     localeProvider.setLanguage(val);
@@ -154,7 +156,7 @@ class _SettingsScreenState extends State<SettingsScreen>
                   }
                 },
               ),
-              title: const Text('🇬🇧 English'),
+              title: Text('🇬🇧 ${l10n.tr('language_english')}'),
               onTap: () {
                 localeProvider.setLanguage(AppLanguage.en);
                 Navigator.of(ctx).pop();
@@ -174,6 +176,7 @@ class _SettingsScreenState extends State<SettingsScreen>
 
   @override
   Widget build(BuildContext context) {
+    // ✅ V build() môžeš použiť normálne verzie (s listen: true)
     final l10n = context.l10n;
     final localeProvider = context.localeProvider;
     final themeProvider = context.themeProvider;
@@ -189,11 +192,13 @@ class _SettingsScreenState extends State<SettingsScreen>
             title: l10n.tr('app_section'),
             child: Column(
               children: [
-                // ✅ Jednoduchý Dark mode prepínač
+                // Dark mode prepínač
                 SwitchListTile(
                   value: themeProvider.isDarkMode,
                   onChanged: (v) {
-                    themeProvider.setDarkMode(v);
+                    // ✅ Tu je OK použiť themeProvider z build()
+                    // lebo onChanged callback dostane hodnotu priamo
+                    context.themeProviderRead.setDarkMode(v);
                   },
                   title: Text(l10n.tr('dark_mode')),
                   secondary: Icon(
@@ -248,25 +253,25 @@ class _SettingsScreenState extends State<SettingsScreen>
           ),
 
           // Sekcia Synchronizácia
-          SectionCard(
-            title: l10n.tr('sync_section'),
-            child: Column(
-              children: [
-                SwitchListTile(
-                  value: autoSync,
-                  onChanged: (v) => setState(() => autoSync = v),
-                  title: Text(l10n.tr('auto_sync')),
-                  secondary: const Icon(Icons.sync),
-                ),
-                ListTile(
-                  leading: const Icon(Icons.sync),
-                  title: Text(l10n.tr('manual_sync')),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () {},
-                ),
-              ],
-            ),
-          ),
+          // SectionCard(
+          //   title: l10n.tr('sync_section'),
+          //   child: Column(
+          //     children: [
+          //       SwitchListTile(
+          //         value: autoSync,
+          //         onChanged: (v) => setState(() => autoSync = v),
+          //         title: Text(l10n.tr('auto_sync')),
+          //         secondary: const Icon(Icons.sync),
+          //       ),
+          //       ListTile(
+          //         leading: const Icon(Icons.sync),
+          //         title: Text(l10n.tr('manual_sync')),
+          //         trailing: const Icon(Icons.chevron_right),
+          //         onTap: () {},
+          //       ),
+          //     ],
+          //   ),
+          // ),
         ],
       ),
     );

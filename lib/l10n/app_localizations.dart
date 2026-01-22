@@ -136,6 +136,13 @@ class AppLocalizations {
       'message_placeholder': 'Správa pre hodinky…',
       'connect_first': 'Najprv sa pripoj...',
       'send': 'Poslať',
+
+      // Unpair / Reset bonding
+      'unpair': 'Odpárovať',
+      'unpair_title': 'Odpárovať zariadenie',
+      'unpair_confirm': 'Naozaj chcete odpárovať hodinky? Budete ich musieť znova spárovať pomocou PIN kódu.',
+      'unpair_success': 'Zariadenie bolo úspešne odpárované',
+      'unpair_partial': 'Čiastočne odpárované (Android bonding sa nepodarilo odstrániť)',
     },
 
     // ==================== ENGLISH ====================
@@ -253,6 +260,13 @@ class AppLocalizations {
       'message_placeholder': 'Message for watch…',
       'connect_first': 'Connect first...',
       'send': 'Send',
+
+      // Unpair / Reset bonding
+      'unpair': 'Unpair',
+      'unpair_title': 'Unpair Device',
+      'unpair_confirm': 'Are you sure you want to unpair the watch? You will need to pair it again using a PIN code.',
+      'unpair_success': 'Device was successfully unpaired',
+      'unpair_partial': 'Partially unpaired (Android bonding could not be removed)',
     },
   };
 }

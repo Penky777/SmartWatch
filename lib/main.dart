@@ -1,20 +1,22 @@
 // lib/main.dart
-
 import 'package:flutter/material.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:provider/provider.dart';
 
 import 'theme/app_theme.dart';
 import 'theme/theme_provider.dart';
+import 'l10n/locale_provider.dart';
+import 'l10n/app_localizations.dart';
 import 'router.dart';
 import 'di.dart';
-import 'l10n/app_localizations.dart';
-import 'l10n/locale_provider.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 
-void main() {
+void main() async{
   WidgetsFlutterBinding.ensureInitialized();
+  await Hive.initFlutter();
+  await setupDi();
   setupDi();
 
-  // ✅ Init pre foreground service (Android)
   FlutterForegroundTask.init(
     androidNotificationOptions: AndroidNotificationOptions(
       channelId: 'ble_channel',
@@ -37,105 +39,37 @@ void main() {
   runApp(const SmartWatchApp());
 }
 
-class SmartWatchApp extends StatefulWidget {
+class SmartWatchApp extends StatelessWidget {
   const SmartWatchApp({super.key});
 
   @override
-  State<SmartWatchApp> createState() => _SmartWatchAppState();
-}
-
-class _SmartWatchAppState extends State<SmartWatchApp> {
-  final LocaleProvider _localeProvider = LocaleProvider();
-  final ThemeProvider _themeProvider = ThemeProvider();
-
-  @override
-  void initState() {
-    super.initState();
-    _localeProvider.addListener(_onSettingsChanged);
-    _themeProvider.addListener(_onSettingsChanged);
-  }
-
-  @override
-  void dispose() {
-    _localeProvider.removeListener(_onSettingsChanged);
-    _themeProvider.removeListener(_onSettingsChanged);
-    _localeProvider.dispose();
-    _themeProvider.dispose();
-    super.dispose();
-  }
-
-  void _onSettingsChanged() {
-    setState(() {});
-  }
-
-  @override
   Widget build(BuildContext context) {
-    return ThemeProviderScope(
-      provider: _themeProvider,
-      child: LocaleProviderScope(
-        provider: _localeProvider,
-        child: LocalizationsProvider(
-          localizations: AppLocalizations(_localeProvider.language),
-          child: MaterialApp(
-            title: 'SmartWatchApp',
-            debugShowCheckedModeBanner: false,
-            theme: _themeProvider.isDarkMode ? AppTheme.dark() : AppTheme.light(),
-            onGenerateRoute: generateRoute,
-            initialRoute: AppRoutes.home,
-          ),
-        ),
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => ThemeProvider()),
+        ChangeNotifierProvider(create: (_) => LocaleProvider()),
+      ],
+      child: Consumer2<ThemeProvider, LocaleProvider>(
+        builder: (context, themeProvider, localeProvider, child) {
+          return LocalizationsProvider(
+            localizations: AppLocalizations(localeProvider.language),
+            child: MaterialApp(
+              title: 'SmartWatchApp',
+              debugShowCheckedModeBanner: false,
+
+              // Téma sa mení podľa ThemeProvider
+              theme: AppTheme.light(),
+              darkTheme: AppTheme.dark(),
+              themeMode: themeProvider.isDarkMode
+                  ? ThemeMode.dark
+                  : ThemeMode.light,
+
+              onGenerateRoute: generateRoute,
+              initialRoute: AppRoutes.home,
+            ),
+          );
+        },
       ),
     );
   }
-}
-
-/// InheritedWidget pre prístup k LocaleProvider
-class LocaleProviderScope extends InheritedWidget {
-  final LocaleProvider provider;
-
-  const LocaleProviderScope({
-    super.key,
-    required this.provider,
-    required super.child,
-  });
-
-  static LocaleProvider of(BuildContext context) {
-    final scope = context.dependOnInheritedWidgetOfExactType<LocaleProviderScope>();
-    return scope!.provider;
-  }
-
-  @override
-  bool updateShouldNotify(LocaleProviderScope oldWidget) {
-    return provider != oldWidget.provider;
-  }
-}
-
-/// InheritedWidget pre prístup k ThemeProvider
-class ThemeProviderScope extends InheritedWidget {
-  final ThemeProvider provider;
-
-  const ThemeProviderScope({
-    super.key,
-    required this.provider,
-    required super.child,
-  });
-
-  static ThemeProvider of(BuildContext context) {
-    final scope = context.dependOnInheritedWidgetOfExactType<ThemeProviderScope>();
-    return scope!.provider;
-  }
-
-  @override
-  bool updateShouldNotify(ThemeProviderScope oldWidget) {
-    return provider != oldWidget.provider;
-  }
-}
-
-/// Extension pre jednoduchý prístup k providerom
-extension LocaleProviderExtension on BuildContext {
-  LocaleProvider get localeProvider => LocaleProviderScope.of(this);
-}
-
-extension ThemeProviderExtension on BuildContext {
-  ThemeProvider get themeProvider => ThemeProviderScope.of(this);
 }

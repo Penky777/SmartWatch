@@ -151,6 +151,70 @@ class _BleScreenState extends State<BleScreen> {
     );
   }
 
+  // ========== UNPAIR / RESET BONDING ==========
+
+  Future<void> _showUnpairDialog() async {
+    final l10n = context.l10n;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.tr('unpair_title')),
+        content: Text(l10n.tr('unpair_confirm')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(l10n.tr('cancel')),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(l10n.tr('unpair')),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      await _performUnpair();
+    }
+  }
+
+  Future<void> _performUnpair() async {
+    final l10n = context.l10n;
+
+    // Zastaví foreground service
+    await stopBleService();
+
+    // Zavolá resetBonding v repository (odpojí + vymaže bonding)
+    final success = await repo.resetBonding();
+
+    // Vymaž aj meno zariadenia
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('ble_last_device_name');
+
+    // Vymaž lokálny stav
+    setState(() {
+      _savedDeviceId = null;
+      _savedDeviceName = null;
+      _devices.clear();
+    });
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(success
+            ? l10n.tr('unpair_success')
+            : l10n.tr('unpair_partial')),
+        backgroundColor: success ? Colors.green : Colors.orange,
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _scanStreamSub?.cancel();
@@ -270,6 +334,7 @@ class _BleScreenState extends State<BleScreen> {
         children: [
           const SizedBox(height: 8),
 
+          // Prvý riadok tlačidiel: Search, Stop, Disconnect
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
@@ -303,15 +368,24 @@ class _BleScreenState extends State<BleScreen> {
 
           const SizedBox(height: 8),
 
+          // Druhý riadok: Pairing chip a UNPAIR tlačidlo
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               pairingChip,
-              const SizedBox(width: 10),
-              Text(
-                'ID: ${BleRepository.kWatchId}',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
+              const SizedBox(width: 12),
+
+              // ✅ UNPAIR TLAČIDLO - zobrazí sa ak je spárované ALEBO máme uložené zariadenie
+              if (isPaired || _savedDeviceId != null)
+                OutlinedButton.icon(
+                  onPressed: _showUnpairDialog,
+                  icon: const Icon(Icons.delete_forever, color: Colors.red),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.red,
+                    side: const BorderSide(color: Colors.red),
+                  ),
+                  label: Text(l10n.tr('unpair')),
+                ),
             ],
           ),
 

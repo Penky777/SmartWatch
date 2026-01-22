@@ -7,9 +7,18 @@ import 'ble/ble_repository.dart';
 
 final getIt = GetIt.instance;
 
-void setupDi() {
+/// Nastavenie Dependency Injection
+/// Teraz je async kvôli inicializácii Hive v BleRepository
+Future<void> setupDi() async {
   // BLE stack
   getIt.registerLazySingleton<FlutterReactiveBle>(() => FlutterReactiveBle());
   getIt.registerLazySingleton<BleClient>(() => BleClient(getIt<FlutterReactiveBle>()));
-  getIt.registerLazySingleton<BleRepository>(() => BleRepository(getIt<BleClient>()));
+
+  // BLE Repository
+  final bleRepo = BleRepository(getIt<BleClient>());
+
+  // ✅ PRIDANÉ: Inicializuj Hive a načítaj históriu
+  await bleRepo.initHive();
+
+  getIt.registerSingleton<BleRepository>(bleRepo);
 }
