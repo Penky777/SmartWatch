@@ -272,22 +272,23 @@ static int ble_app_gap_event(struct ble_gap_event *event, void *arg)
                 pin_send_count = 0;  // Reset PIN send counter
                 ESP_LOGI(TAG, "Connected to device");
 
-                // Generate random PIN (6 digits)
-                pairing_pin = (esp_random() % 900000) + 100000;
+                // Check if we already have bonding info for this device
+                struct ble_sm_io pkey = {0};
+                struct ble_gap_conn_desc desc;
+                if (ble_gap_conn_find(conn_handle, &desc) == 0) {
+                    ESP_LOGI(TAG, "Connection from: %02x:%02x:%02x:%02x:%02x:%02x (type=%d)",
+                             desc.peer_id_addr.val[5], desc.peer_id_addr.val[4],
+                             desc.peer_id_addr.val[3], desc.peer_id_addr.val[2],
+                             desc.peer_id_addr.val[1], desc.peer_id_addr.val[0],
+                             desc.peer_id_addr.type);
+                }
+
+                // DON'T generate PIN or show UI here - wait for BLE_GAP_EVENT_PASSKEY_ACTION
+                // If device is bonded, that event won't fire and connection proceeds silently
+                pairing_pin = 0;
                 pairing_confirmed = false;
 
-                // Show pairing screen on watch for user to verify PIN
-                gui_lock();
-                ui_show_pairing(pairing_pin);
-                gui_unlock();
-
-                // Start pairing timeout timer (30 seconds from now)
-                if (pairing_timeout_timer == NULL) {
-                    pairing_timeout_timer = xTimerCreate("pairing_timeout", pdMS_TO_TICKS(30000), pdFALSE, NULL, pairing_timer_callback);
-                }
-                if (pairing_timeout_timer != NULL) {
-                    xTimerStart(pairing_timeout_timer, 0);
-                }
+                // Timer will be started only if BLE_GAP_EVENT_PASSKEY_ACTION fires (new pairing)
             } else {
                 ESP_LOGE(TAG, "Connection failed: %d", event->connect.status);
             }
@@ -333,10 +334,35 @@ static int ble_app_gap_event(struct ble_gap_event *event, void *arg)
                 xTimerStop(pin_send_timer, 0);
                 pin_send_timer = NULL;
             }
+            
+            // Restart advertising so phone can reconnect
+            ble_app_advertise();
+            ESP_LOGI(TAG, "Advertising restarted after disconnect");
             break;
 
         case BLE_GAP_EVENT_PASSKEY_ACTION:
             ESP_LOGI(TAG, "Passkey action requested, action=%d", event->passkey.params.action);
+            
+            // Only generate PIN if we haven't already (first passkey request)
+            if (pairing_pin == 0) {
+                pairing_pin = (esp_random() % 900000) + 100000;
+                ESP_LOGI(TAG, "Generated new pairing PIN: %d", pairing_pin);
+                
+                // Show pairing screen on watch
+                gui_lock();
+                ui_show_pairing(pairing_pin);
+                gui_unlock();
+                
+                // Start pairing timeout timer (30 seconds) - only for new pairing
+                if (pairing_timeout_timer == NULL) {
+                    pairing_timeout_timer = xTimerCreate("pairing_timeout", pdMS_TO_TICKS(30000), pdFALSE, NULL, pairing_timer_callback);
+                }
+                if (pairing_timeout_timer != NULL) {
+                    xTimerStart(pairing_timeout_timer, 0);
+                    ESP_LOGI(TAG, "Pairing timeout started (30 seconds)");
+                }
+            }
+            
             // Provide our PIN as the passkey
             struct ble_sm_io pkey = {0};
             pkey.action = event->passkey.params.action;

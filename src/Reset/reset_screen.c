@@ -1,6 +1,28 @@
 #include "lvgl.h"
 #include "../Ui_manager/ui_manager.h"
 #include <stdio.h>
+#include "esp_system.h"
+#include "nvs.h"
+#include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+static const char *TAG = "RESET";
+
+// Function to clear BLE bonding data from NVS
+static void clear_ble_bonding(void) {
+    ESP_LOGI(TAG, "Clearing BLE bonding data...");
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open("nimble_bond", NVS_READWRITE, &handle);
+    if (err == ESP_OK) {
+        nvs_erase_all(handle);
+        nvs_commit(handle);
+        nvs_close(handle);
+        ESP_LOGI(TAG, "BLE bonding data cleared");
+    } else {
+        ESP_LOGW(TAG, "Failed to open nimble_bond namespace: %s", esp_err_to_name(err));
+    }
+}
 
 // Forward declarations
 static void confirm_btn_event_cb(lv_event_t *e);
@@ -71,8 +93,6 @@ lv_obj_t *build_reset_screen(void) {
 
 static void confirm_btn_event_cb(lv_event_t *e) {
     (void)e;
-    // TODO: Implement actual factory reset logic here
-    // For now, just show a confirmation message
     
     lv_obj_t *scr = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
@@ -87,11 +107,15 @@ static void confirm_btn_event_cb(lv_event_t *e) {
     
     lv_scr_load(scr);
     
-    // Add your reset logic here:
-    // - Clear NVS storage
-    // - Reset RTC settings
-    // - Clear BLE pairing data
-    // - Reboot device
+    // Clear BLE bonding data
+    clear_ble_bonding();
+    
+    // Wait a moment before reboot
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    
+    // Reboot device
+    ESP_LOGI(TAG, "Rebooting device...");
+    esp_restart();
 }
 
 static void cancel_btn_event_cb(lv_event_t *e) {
