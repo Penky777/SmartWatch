@@ -1,2 +1,4 @@
 # Ensures the main task has enough stack for LVGL alert scrolling
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+# Enable NimBLE NVS bonding store for persistent pairing key storage
+CONFIG_BLE_STORE_CONFIG_PERSIST=y
