@@ -17,7 +17,7 @@ Future<void> setupDi() async {
   // BLE Repository
   final bleRepo = BleRepository(getIt<BleClient>());
 
-  // ✅ PRIDANÉ: Inicializuj Hive a načítaj históriu
+  // Inicializuj Hive a načítaj históriu
   await bleRepo.initHive();
 
   getIt.registerSingleton<BleRepository>(bleRepo);

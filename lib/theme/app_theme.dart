@@ -99,7 +99,7 @@ class AppTheme {
     return ThemeData(
       useMaterial3: true,
       colorScheme: colorScheme,
-      // ✅ Svetlo sivé pozadie pre celú appku
+      // Svetlo sivé pozadie pre celú appku
       scaffoldBackgroundColor: AppColors.backgroundLight,
       appBarTheme: AppBarTheme(
         backgroundColor: colorScheme.surface,

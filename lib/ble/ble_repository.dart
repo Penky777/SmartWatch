@@ -1,4 +1,5 @@
-// lib/ble/ble_repository.dart - S HIVE + RESET BONDING
+// lib/ble/ble_repository.dart
+
 import 'dart:async';
 import 'dart:convert';
 
@@ -10,11 +11,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'ble_client.dart';
 import 'ble_uuids.dart';
-import '../services/bluetooth_bond_service.dart';  // ✅ PRIDANÉ
+import '../services/bluetooth_bond_service.dart';
 
 enum BleStatus { idle, scanning, connecting, connected, disconnected, error }
 
-/// Trieda pre health dáta z hodiniek
+/// Trieda pre health data z hodiniek
 class HealthData {
   int heartRate;
   int spo2;
@@ -79,9 +80,7 @@ class BleRepository {
   BleRepository(this._client);
 
   static const String kWatchId = 'ble_last_device';
-
-  // HIVE BOX pre históriu
-  static const String _hiveBoxName = 'health_data';
+  static const String _hiveBoxName = 'health_history';
   Box? _hiveBox;
 
   final _statusCtrl = BehaviorSubject<BleStatus>.seeded(BleStatus.idle);
@@ -148,6 +147,9 @@ class BleRepository {
 
   static const Duration _reconnectBaseDelay = Duration(seconds: 2);
   static const Duration _reconnectMaxDelay = Duration(seconds: 30);
+
+  // Delay pred subscribe - hodinky potrebuju cas na pripravu po GATT connect
+  static const Duration _pairingReadyDelay = Duration(milliseconds: 1500);
 
   // ========== HIVE INICIALIZÁCIA A NAČÍTANIE ==========
 
@@ -322,25 +324,7 @@ class BleRepository {
               _log('MTU request failed: $e');
             }
 
-            await _notifySub?.cancel();
-            _notifySub = _client
-                .subscribe(
-              deviceId: id,
-              service: BleUUIDs.service,
-              characteristic: BleUUIDs.txChar,
-            )
-                .listen(
-                  (data) {
-                _log('TX chunk len=${data.length}');
-                _handleTxNotify(data);
-              },
-              onError: (e) {
-                _log('NOTIFY ERROR: $e');
-                _set(BleStatus.error);
-              },
-            );
-
-            _log('Subscribed to TX notifications');
+            await _setupCharacteristicSubscription(id);
 
             if (_isPaired) {
               _startTimeSync();
@@ -393,6 +377,40 @@ class BleRepository {
         }
       },
     );
+  }
+
+  // ========== CHARACTERISTIC SUBSCRIPTION ==========
+
+  /// Nastavi subscription na TX charakteristiku.
+  /// Ak zariadenie nie je bonded, pocka pred subscribe aby boli hodinky ready.
+  Future<void> _setupCharacteristicSubscription(String id) async {
+    final bondState = await BluetoothBondService.getBondState(id);
+    _log('BOND_STATE: $bondState');
+
+    if (bondState != BondState.bonded) {
+      _log('Device not bonded - waiting for watch ready...');
+      await Future.delayed(_pairingReadyDelay);
+    }
+
+    await _notifySub?.cancel();
+    _notifySub = _client
+        .subscribe(
+      deviceId: id,
+      service: BleUUIDs.service,
+      characteristic: BleUUIDs.txChar,
+    )
+        .listen(
+          (data) {
+        _log('TX chunk len=${data.length}');
+        _handleTxNotify(data);
+      },
+      onError: (e) {
+        _log('NOTIFY ERROR: $e');
+        _set(BleStatus.error);
+      },
+    );
+
+    _log('Subscribed to TX notifications');
   }
 
   Future<void> disconnect() async {
@@ -465,10 +483,10 @@ class BleRepository {
     await disconnect();
   }
 
-  // ========== ✅ RESET BONDING (NOVÉ) ==========
+  // ========== RESET BONDING ==========
 
-  /// Odstráni bonding a odpojí sa od zariadenia
-  /// Používateľ bude musieť znova spárovať (PIN)
+  /// Odstrani bonding a odpoji sa od zariadenia.
+  /// Pouzivatel bude musiet znova sparovat (PIN).
   Future<bool> resetBonding() async {
     final id = _deviceId;
     if (id == null) {
@@ -478,20 +496,16 @@ class BleRepository {
 
     _log('RESET_BONDING: Starting for $id');
 
-    // 1. Odpoj sa
     await disconnect();
 
-    // 2. Vymaž lokálne uložený pairing flag
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_pairedKey(id), false);
     _setPaired(false);
     _log('RESET_BONDING: Local pairing cleared');
 
-    // 3. Odstráň Android bonding
     final success = await BluetoothBondService.removeBond(id);
     _log('RESET_BONDING: Android removeBond = $success');
 
-    // 4. Vymaž uložené device ID
     await prefs.remove(kWatchId);
     _deviceId = null;
 
@@ -587,53 +601,19 @@ class BleRepository {
     _log('TIME_SYNC stopped');
   }
 
-  Future<void> _sendTimeSyncOnce() async {
-    final id = _deviceId;
-    if (id == null) return;
-    if (_status != BleStatus.connected) return;
-    if (!_isPaired) {
-      _log('TIME_SYNC skipped (not paired yet)');
-      return;
-    }
-
+  void _sendTimeSyncOnce() {
     final now = DateTime.now();
-    final ts = now.toUtc().millisecondsSinceEpoch ~/ 1000;
-    final tzMin = now.timeZoneOffset.inMinutes;
-
-    final msg = {
-      "type": "sync",
-      "ts": ts,
-      "tzMin": tzMin,
+    final payload = {
+      'timeSync': {
+        'timestamp': now.millisecondsSinceEpoch,
+        'timezone': now.timeZoneOffset.inMinutes,
+      }
     };
-
     try {
-      await sendString(jsonEncode(msg));
-      _log('TIME_SYNC sent');
+      sendString(jsonEncode(payload));
+      _log('TIME_SYNC sent: ${now.toIso8601String()}');
     } catch (e) {
-      _log('TIME_SYNC send failed: $e');
+      _log('TIME_SYNC failed: $e');
     }
-  }
-
-  // ========== DISPOSE ==========
-
-  void dispose() {
-    _saveHistoryToHive();
-    _hiveBox?.close();
-
-    _scanTimeout?.cancel();
-    _scanSub?.cancel();
-    _connSub?.cancel();
-    _notifySub?.cancel();
-    _pairingTimeout?.cancel();
-    _reconnectTimer?.cancel();
-    _timeSyncTimer?.cancel();
-
-    _devicesCtrl.close();
-    _pairingPinCtrl.close();
-    _txTextCtrl.close();
-    _consoleCtrl.close();
-    _statusCtrl.close();
-    _pairedStatusCtrl.close();
-    _healthDataCtrl.close();
   }
 }
