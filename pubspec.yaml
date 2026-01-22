@@ -70,9 +70,22 @@ dev_dependencies:
   flutter_driver:
     sdk: flutter
   appium_flutter_server: ^0.0.33
+  flutter_launcher_icons: ^0.13.1
+  flutter_native_splash: ^2.3.2
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon/app_icon.png"
+
+flutter_native_splash:
+  color: "#121317"                    # Farba pozadia (tvoja antracitová)
+  image: "assets/splash/splash.png"   # Logo v strede
+  android: true
+  ios: true
 
 flutter:
   # The following line ensures that the Material Icons font is
