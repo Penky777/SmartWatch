@@ -420,12 +420,12 @@ static void monitor_task(void *arg) {
     while (1) {
         uint32_t now = lv_tick_get();
         
-        // Log heap stats periodically
-        if (now - last_check >= HEAP_CHECK_INTERVAL_MS) {
-            log_heap_stats("periodic");
-            check_heap_integrity("periodic");
-            last_check = now;
-        }
+        // Log heap stats periodically (DISABLED to save battery)
+        // if (now - last_check >= HEAP_CHECK_INTERVAL_MS) {
+        //     log_heap_stats("periodic");
+        //     check_heap_integrity("periodic");
+        //     last_check = now;
+        // }
         
         // Auto-sleep with power management
         if (!bsp_pwr_is_screen_sleeping() &&      // Not already sleeping
@@ -808,10 +808,11 @@ if (max_err != ESP_OK) {
         }
         
         
-        if (now - last_perf_log > 2000) {
-            ESP_LOGI("PERF", "Heap: %u bytes", (unsigned)esp_get_free_heap_size());
-            last_perf_log = now;
-        }
+        // Performance logging disabled to save battery
+        // if (now - last_perf_log > 2000) {
+        //     ESP_LOGI("PERF", "Heap: %u bytes", (unsigned)esp_get_free_heap_size());
+        //     last_perf_log = now;
+        // }
         
         // lv_mem_monitor_t m  on;
         // lv_mem_monitor(&mon);   

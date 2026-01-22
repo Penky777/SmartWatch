@@ -108,7 +108,7 @@ static void step_detection_task(void *arg)
                 step_detected = true;
                 step_count++;
                 last_step_time = now;
-                ESP_LOGI(TAG, "Step detected! Total steps: %lu", step_count);
+                // ESP_LOGI(TAG, "Step detected! Total steps: %lu", step_count);  // Disabled to save battery
             } else if (filtered < threshold / 2) {
                 step_detected = false;
             }
