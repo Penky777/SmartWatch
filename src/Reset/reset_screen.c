@@ -3,14 +3,18 @@
 #include <stdio.h>
 #include "esp_system.h"
 #include "nvs.h"
+#include "nvs_flash.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
 static const char *TAG = "RESET";
 
-// Function to clear BLE bonding data from NVS
-static void clear_ble_bonding(void) {
+// Function to perform complete factory reset
+static void perform_factory_reset(void) {
+    ESP_LOGI(TAG, "=== FACTORY RESET STARTING ===");
+    
+    // 1. Clear BLE bonding data
     ESP_LOGI(TAG, "Clearing BLE bonding data...");
     nvs_handle_t handle;
     esp_err_t err = nvs_open("nimble_bond", NVS_READWRITE, &handle);
@@ -18,10 +22,28 @@ static void clear_ble_bonding(void) {
         nvs_erase_all(handle);
         nvs_commit(handle);
         nvs_close(handle);
-        ESP_LOGI(TAG, "BLE bonding data cleared");
+        ESP_LOGI(TAG, "✓ BLE bonding data cleared");
     } else {
-        ESP_LOGW(TAG, "Failed to open nimble_bond namespace: %s", esp_err_to_name(err));
+        ESP_LOGW(TAG, "Failed to open nimble_bond: %s", esp_err_to_name(err));
     }
+    
+    // 2. Erase ALL NVS storage (complete reset)
+    ESP_LOGI(TAG, "Erasing entire NVS flash...");
+    err = nvs_flash_erase();
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "✓ All NVS storage erased");
+    } else {
+        ESP_LOGW(TAG, "Failed to erase NVS: %s", esp_err_to_name(err));
+    }
+    
+    // 3. Reinitialize NVS
+    ESP_LOGI(TAG, "Reinitializing NVS...");
+    err = nvs_flash_init();
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "✓ NVS reinitialized");
+    }
+    
+    ESP_LOGI(TAG, "=== FACTORY RESET COMPLETE ===");
 }
 
 // Forward declarations
@@ -99,7 +121,7 @@ static void confirm_btn_event_cb(lv_event_t *e) {
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
     
     lv_obj_t *msg = lv_label_create(scr);
-    lv_label_set_text(msg, "Resetting...\nPlease wait");
+    lv_label_set_text(msg, "Factory Reset\nErasing all data...");
     lv_obj_set_style_text_color(msg, lv_color_white(), 0);
     lv_obj_set_style_text_font(msg, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_align(msg, LV_TEXT_ALIGN_CENTER, 0);
@@ -107,8 +129,8 @@ static void confirm_btn_event_cb(lv_event_t *e) {
     
     lv_scr_load(scr);
     
-    // Clear BLE bonding data
-    clear_ble_bonding();
+    // Perform complete factory reset
+    perform_factory_reset();
     
     // Wait a moment before reboot
     vTaskDelay(pdMS_TO_TICKS(2000));
